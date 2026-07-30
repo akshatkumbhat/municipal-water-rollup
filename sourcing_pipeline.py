@@ -24,14 +24,13 @@ import argparse
 import concurrent.futures as futures
 import json
 import logging
-import math
 import re
 import time
 import urllib.robotparser
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import pandas as pd
@@ -95,7 +94,7 @@ FLEET_PATTERNS = (
 )
 PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}")
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
-YEAR_NOW = datetime.now(timezone.utc).year
+YEAR_NOW = datetime.now(UTC).year
 
 
 @dataclass(frozen=True)
@@ -660,7 +659,7 @@ def main() -> None:
                 enriched.append(failed)
 
     scored = apply_scoring(pd.DataFrame(enriched))
-    scored["scraped_at_utc"] = datetime.now(timezone.utc).isoformat()
+    scored["scraped_at_utc"] = datetime.now(UTC).isoformat()
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     scored.to_csv(output, index=False)

@@ -24,8 +24,12 @@ The strategy deliberately excludes ownership of regulated utilities, commodity-h
 
 ## Installation
 
+Requires Python 3.11+. Create the virtualenv with an explicit 3.11+ interpreter
+(`python3.11`) — a bare `python`/`python3` may resolve to an older version and
+fail on numpy 2.x / pandas 2.x wheels.
+
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```

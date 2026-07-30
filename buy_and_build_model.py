@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 
@@ -63,6 +63,10 @@ DEFAULT_ADDONS = (
     AddOn("Add-on C", close_year=4, revenue_at_close=3.0, ebitda_margin=0.20),
 )
 
+# Module-level singleton so it can serve as an immutable default argument
+# without constructing a new instance on every import (ruff B008).
+DEFAULT_ASSUMPTIONS = Assumptions()
+
 
 def validate_assumptions(a: Assumptions, add_ons: Iterable[AddOn]) -> None:
     if a.forecast_years < 1:
@@ -89,7 +93,7 @@ def validate_assumptions(a: Assumptions, add_ons: Iterable[AddOn]) -> None:
 
 
 def build_model(
-    assumptions: Assumptions = Assumptions(),
+    assumptions: Assumptions = DEFAULT_ASSUMPTIONS,
     add_ons: Iterable[AddOn] = DEFAULT_ADDONS,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     """Return the annual operating/debt schedule and sponsor return summary.

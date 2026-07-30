@@ -3,7 +3,7 @@
 Status values: `NOT STARTED`, `IN PROGRESS`, `BLOCKED`, `DONE`.
 
 ## Phase 0 — Repository audit
-**Status:** NOT STARTED
+**Status:** DONE (2026-07-30 — see `AUDIT_PHASE0.md`)
 
 Acceptance criteria:
 - Existing scripts compile and current model outputs are reproduced.
@@ -11,7 +11,15 @@ Acceptance criteria:
 - No production code changes occur before the audit plan is approved.
 
 ## Phase 1 — Engineering foundation
-**Status:** NOT STARTED
+**Status:** DONE (2026-07-30)
+
+Delivered: ruff `exclude` now covers `.venv`/`.git`/`__pycache__`; `requires-python
+>= 3.11` declared; 7 source lint issues fixed (imports, `datetime.UTC`, B008
+singleton); venv-creation docs standardized on `python3.11`. `ruff check .`,
+`py_compile`, `pytest` (13 passed), `make model`, and `scripts/smoke_test.sh` all
+green from a clean 3.11 venv; base-case returns unchanged (MOIC 4.54x / IRR 35.3%).
+Deferred to Phase 2: 19 mypy errors in `sourcing_pipeline.py` and adding mypy to
+the lint gate.
 
 Acceptance criteria:
 - Clean environment installs from `requirements-dev.txt`.

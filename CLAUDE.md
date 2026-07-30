@@ -29,8 +29,11 @@ Build an investment-committee-grade municipal water and wastewater asset-integri
 - Do not weaken tests to make a change pass.
 
 ## Standard commands
+Python 3.11+ is required. Create the venv with an explicit 3.11+ interpreter
+(`python3.11`); a bare `python`/`python3` may resolve to an older version and
+fail on numpy 2.x / pandas 2.x wheels. Commands after activation use `python`.
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 python -m pip install -r requirements-dev.txt
 make lint
