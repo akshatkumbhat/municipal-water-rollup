@@ -28,7 +28,23 @@ Acceptance criteria:
 - Sample fixtures are deterministic and small.
 
 ## Phase 2 — Sourcing engine
-**Status:** NOT STARTED
+**Status:** DONE (2026-07-30)
+
+Delivered: `HtmlFetcher` seam (network + offline) makes the whole pipeline
+testable without network and powers `--offline-demo`; `sourcing_fixtures.py`
+provides 54 deterministic synthetic companies (49 ok / 3 blocked / 2 error) run
+end to end; phone/address normalization added; deduplication rewritten as a
+deterministic union-find over domain/phone/name/address with a retained
+`duplicate_count`/`merged_from`/`merge_reason` audit trail; provenance
+(`verification_date`, `evidence_summary`, `address_normalized`) preserved through
+every transformation; the `data_confidence` missing-column crash fixed (scoring
+methodology locked by golden tests). All 19 mypy errors in production source
+resolved and mypy added to `make lint`. 46 tests (was 13), network-free.
+
+Also fixed a latent Phase-0-missed defect: `BeautifulSoup(html, "lxml")` required
+an undeclared `lxml` dependency; switched to the stdlib `html.parser` (no new
+deps). Deferred/non-goals recorded in the Phase 2 plan (full `sourcing/` package
+split; live-directory selector maintenance; robots-cache efficiency rework).
 
 Acceptance criteria:
 - Directory adapters, normalization, enrichment, scoring, and export are separable modules or clearly separated functions.

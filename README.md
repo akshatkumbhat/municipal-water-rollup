@@ -58,6 +58,20 @@ python sourcing_pipeline.py \
 
 The script respects robots.txt and does not bypass authentication, CAPTCHAs, rate limits, or access controls. Review source terms before commercial use. Replace the example User-Agent contact address before deployment.
 
+### Offline demo (no network)
+
+To generate a realistic target file from bundled synthetic fixtures — no scraping, no network — use:
+
+```bash
+python sourcing_pipeline.py --offline-demo --output outputs/targets_demo.csv --min-targets 50
+```
+
+This runs 50+ fictional companies through the identical normalization, deduplication, enrichment, and scoring path used for live sources. All fixture companies are synthetic (reserved `example.com` domains); nothing in the demo is a claim about a real company. The same fixtures drive the network-free automated test suite.
+
+### Deduplication audit trail
+
+Records are merged when they share any of four signals — registrable **domain**, canonical **phone**, normalized **name**, or normalized **address** — using a deterministic union-find. Merges are never silent: each surviving row carries `duplicate_count`, `merged_from` (the names it absorbed), and `merge_reason` (which signals matched). Note that address-only matches can merge distinct firms sharing a building; treat `merge_reason == "address"` merges as review candidates.
+
 ## 2. Run the buy-and-build model
 
 ```bash

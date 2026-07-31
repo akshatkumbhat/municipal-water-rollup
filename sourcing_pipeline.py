@@ -27,15 +27,17 @@ import logging
 import re
 import time
 import urllib.robotparser
+from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -187,8 +189,79 @@ def normalize_name(name: str) -> str:
     value = re.sub(r"\s+", " ", (name or "")).strip(" -|,;:")
     value = re.sub(r"\b(?:incorporated|corporation|company|limited)\b", "", value, flags=re.I)
     value = re.sub(r"\b(?:inc|corp|co|llc|ltd)\.?\b", "", value, flags=re.I)
-    value = re.sub(r"\s+", " ", value).strip(" -|,;:")
+    # Collapse whitespace and trim orphaned punctuation left by suffix removal
+    # (e.g. "Acme Services, Inc." -> the trailing ", ." is stripped).
+    value = re.sub(r"\s+", " ", value).strip(" -|,;:.")
     return value.title()
+
+
+def name_slug(name: str) -> str:
+    """Alphanumeric-only lowercase key used for name-collision dedup."""
+    return re.sub(r"\W+", "", normalize_name(name).lower())
+
+
+def attr_str(tag: Tag, name: str) -> str:
+    """Read a BeautifulSoup attribute as a plain string.
+
+    bs4 types multi-valued attributes (e.g. ``class``) as lists, so ``tag.get``
+    returns ``str | list[str] | None``. Collapse every shape to a stripped str.
+    """
+    value = tag.get(name)
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return " ".join(str(part) for part in value).strip()
+
+
+def canonical_phone(value: str | None) -> str:
+    """Return a NANP phone as ``+1XXXXXXXXXX``; empty string if not parseable.
+
+    US/North-American numbering only (matches ``PHONE_RE``); international
+    numbers are intentionally out of scope and return "".
+    """
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) != 10:
+        return ""
+    return "+1" + digits
+
+
+def normalize_phone(value: str | None) -> str:
+    """Human-readable canonical form ``(XXX) XXX-XXXX``; "" if not parseable."""
+    canonical = canonical_phone(value)
+    if not canonical:
+        return ""
+    d = canonical[2:]
+    return f"({d[0:3]}) {d[3:6]}-{d[6:10]}"
+
+
+_STREET_ABBREVIATIONS = {
+    "street": "st",
+    "avenue": "ave",
+    "boulevard": "blvd",
+    "drive": "dr",
+    "road": "rd",
+    "lane": "ln",
+    "suite": "ste",
+    "highway": "hwy",
+    "parkway": "pkwy",
+}
+
+
+def normalize_address(value: str | None) -> str:
+    """Collapse whitespace/punctuation and standardize common street suffixes.
+
+    Produces a stable lowercase key so the same physical address written in
+    different formats compares equal. Deterministic; no geocoding.
+    """
+    text = re.sub(r"[.,;]+", " ", (value or "").lower())
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    tokens = [_STREET_ABBREVIATIONS.get(token, token) for token in text.split(" ")]
+    return " ".join(tokens)
 
 
 def robots_allows(session: requests.Session, url: str) -> bool:
@@ -222,16 +295,67 @@ def get_html(session: requests.Session, url: str, delay_seconds: float) -> str:
     return response.text
 
 
-def first_text(node: BeautifulSoup, selector: str) -> str:
+class HtmlFetcher(Protocol):
+    """Seam that returns page HTML for a URL.
+
+    Returns "" when a page is unavailable for compliance reasons (robots.txt
+    denial, non-HTML content); raises ``requests.RequestException`` on transport
+    failure. This lets scraping, enrichment, and tests share one code path while
+    keeping all live-network behavior (and its offline substitute) behind a
+    single interface.
+    """
+
+    def fetch(self, url: str) -> str: ...
+
+
+class NetworkFetcher:
+    """Live fetcher: preserves robots.txt enforcement, rate-limit delay, retries."""
+
+    def __init__(self, session: requests.Session, delay_seconds: float) -> None:
+        self._session = session
+        self._delay_seconds = delay_seconds
+
+    def fetch(self, url: str) -> str:
+        return get_html(self._session, url, self._delay_seconds)
+
+
+class OfflineFetcher:
+    """Deterministic fetcher backed by in-memory fixtures — no network at all.
+
+    * ``pages``: canonical URL -> HTML, served directly.
+    * ``blocked``: URLs treated as robots-denied / non-HTML (return "").
+    * ``errors``: URLs that raise ``requests.RequestException`` (transport failure).
+    """
+
+    def __init__(
+        self,
+        pages: dict[str, str],
+        blocked: Iterable[str] = (),
+        errors: Iterable[str] = (),
+    ) -> None:
+        self._pages = {canonicalize_url(url): html for url, html in pages.items()}
+        self._blocked = {canonicalize_url(url) for url in blocked}
+        self._errors = {canonicalize_url(url) for url in errors}
+
+    def fetch(self, url: str) -> str:
+        key = canonicalize_url(url)
+        if key in self._errors:
+            raise requests.RequestException(f"synthetic fetch failure for {key}")
+        if key in self._blocked:
+            return ""
+        return self._pages.get(key, "")
+
+
+def first_text(node: Tag, selector: str) -> str:
     if not selector:
         return ""
     found = node.select_one(selector)
     return found.get_text(" ", strip=True) if found else ""
 
 
-def first_link(node: BeautifulSoup, selector: str, base_url: str) -> str:
+def first_link(node: Tag, selector: str, base_url: str) -> str:
     for found in node.select(selector or "a[href]"):
-        href = found.get("href", "").strip()
+        href = attr_str(found, "href")
         if not href or href.startswith(("mailto:", "tel:", "javascript:", "#")):
             continue
         absolute = urljoin(base_url, href)
@@ -282,7 +406,7 @@ def parse_json_ld(soup: BeautifulSoup, source: DirectorySource, page_url: str) -
     return records
 
 
-def generic_item_nodes(soup: BeautifulSoup) -> list[BeautifulSoup]:
+def generic_item_nodes(soup: BeautifulSoup) -> list[Tag]:
     selectors = (
         "article",
         ".directory-item",
@@ -293,7 +417,7 @@ def generic_item_nodes(soup: BeautifulSoup) -> list[BeautifulSoup]:
         "main table tr",
     )
     for selector in selectors:
-        nodes = soup.select(selector)
+        nodes = list(soup.select(selector))
         if len(nodes) >= 3:
             return nodes
     return []
@@ -304,9 +428,9 @@ def parse_directory_page(
     source: DirectorySource,
     page_url: str,
 ) -> tuple[list[dict[str, str]], str]:
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
     records = parse_json_ld(soup, source, page_url)
-    nodes = soup.select(source.item_selector) if source.item_selector else []
+    nodes: list[Tag] = list(soup.select(source.item_selector)) if source.item_selector else []
     if len(nodes) < 3:
         nodes = generic_item_nodes(soup)
 
@@ -349,18 +473,14 @@ def parse_directory_page(
 
     next_url = ""
     for next_link in soup.select(source.next_selector):
-        href = next_link.get("href", "")
+        href = attr_str(next_link, "href")
         if href:
             next_url = canonicalize_url(urljoin(page_url, href))
             break
     return records, next_url
 
 
-def scrape_source(
-    session: requests.Session,
-    source: DirectorySource,
-    delay_seconds: float,
-) -> list[dict[str, str]]:
+def scrape_source(fetcher: HtmlFetcher, source: DirectorySource) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
     seen_pages: set[str] = set()
     page_url = canonicalize_url(source.url)
@@ -371,7 +491,7 @@ def scrape_source(
         seen_pages.add(page_url)
         LOGGER.info("Scraping %s: %s", source.name, page_url)
         try:
-            html = get_html(session, page_url, delay_seconds)
+            html = fetcher.fetch(page_url)
         except requests.RequestException as exc:
             LOGGER.warning("Source failed %s: %s", page_url, exc)
             break
@@ -408,7 +528,7 @@ def internal_link_count(soup: BeautifulSoup, base_url: str) -> int:
     base_domain = registrable_domain(base_url)
     paths: set[str] = set()
     for anchor in soup.select("a[href]"):
-        href = urljoin(base_url, anchor.get("href", ""))
+        href = urljoin(base_url, attr_str(anchor, "href"))
         parsed = urlparse(href)
         if parsed.scheme not in {"http", "https"}:
             continue
@@ -420,26 +540,39 @@ def internal_link_count(soup: BeautifulSoup, base_url: str) -> int:
     return len(paths)
 
 
-def enrich_company(session: requests.Session, row: dict[str, str], delay_seconds: float) -> dict[str, object]:
-    result: dict[str, object] = dict(row)
+def enrich_company(fetcher: HtmlFetcher, row: dict[str, Any], verified_on: str) -> dict[str, Any]:
+    """Visit the company website and attach enrichment + provenance fields.
+
+    Provenance is preserved end to end: directory fields from ``row`` are kept,
+    and every returned record carries ``verification_date`` (when the site was
+    checked) plus ``address_normalized``. Extracted figures are accompanied by an
+    ``evidence_summary`` so no estimate is presented without a trace.
+    """
+    result: dict[str, Any] = dict(row)
+    result["verification_date"] = verified_on
+    result["address_normalized"] = normalize_address(str(row.get("address", "")))
     url = canonicalize_url(str(row.get("company_url", "")))
     if not url:
-        result.update({"website_status": "missing", "enrichment_error": "No company URL"})
+        result.update(
+            {"website_status": "missing", "enrichment_error": "No company URL", "evidence_summary": ""}
+        )
         return result
     try:
-        html = get_html(session, url, delay_seconds)
+        html = fetcher.fetch(url)
         if not html:
-            result.update({"website_status": "blocked", "enrichment_error": "robots or non-HTML"})
+            result.update(
+                {"website_status": "blocked", "enrichment_error": "robots or non-HTML", "evidence_summary": ""}
+            )
             return result
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html, "html.parser")
         text = soup.get_text(" ", strip=True)[:MAX_SITE_TEXT_CHARS]
         lower_text = text.lower()
         service_hits = sorted(keyword for keyword in SERVICE_KEYWORDS if keyword in lower_text)
         social_domains = {
-            registrable_domain(anchor.get("href", ""))
+            registrable_domain(attr_str(anchor, "href"))
             for anchor in soup.select("a[href]")
             if any(
-                social in anchor.get("href", "").lower()
+                social in attr_str(anchor, "href").lower()
                 for social in ("linkedin.com", "facebook.com", "instagram.com", "youtube.com", "x.com", "twitter.com")
             )
         }
@@ -449,10 +582,22 @@ def enrich_company(session: requests.Session, row: dict[str, str], delay_seconds
         employees = extract_first_int(EMPLOYEE_PATTERNS, text)
         technicians = extract_first_int(TECHNICIAN_PATTERNS, text)
         fleet = extract_first_int(FLEET_PATTERNS, text)
+        workforce_evidence = "reported"
         if technicians is None and fleet is not None:
             technicians = max(1, round(fleet * 1.1))
+            workforce_evidence = "inferred from fleet"
         if employees is None and technicians is not None:
             employees = max(technicians, round(technicians * 1.5))
+
+        evidence_parts: list[str] = []
+        if founding_year is not None:
+            evidence_parts.append(f"founding_year={founding_year} (site text)")
+        if technicians is not None:
+            evidence_parts.append(f"technicians={technicians} ({workforce_evidence})")
+        if employees is not None:
+            evidence_parts.append(f"employees={employees}")
+        if service_hits:
+            evidence_parts.append("services=" + ",".join(service_hits[:6]))
 
         result.update(
             {
@@ -476,12 +621,16 @@ def enrich_company(session: requests.Session, row: dict[str, str], delay_seconds
                 ),
                 "careers_page_found": "careers" in lower_text or "join our team" in lower_text,
                 "primary_email": emails[0] if emails else "",
-                "primary_phone": phones[0] if phones else "",
+                "primary_phone": normalize_phone(phones[0]) if phones else "",
+                "phone_canonical": canonical_phone(phones[0]) if phones else "",
+                "evidence_summary": "; ".join(evidence_parts),
                 "enrichment_error": "",
             }
         )
     except requests.RequestException as exc:
-        result.update({"website_status": "error", "enrichment_error": str(exc)[:300]})
+        result.update(
+            {"website_status": "error", "enrichment_error": str(exc)[:300], "evidence_summary": ""}
+        )
     return result
 
 
@@ -558,13 +707,21 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     scored["priority_score"] = (
         scored["age_score"] + scored["workforce_score"] + scored["digital_whitespace_score"]
     ).round(1)
+    # data_confidence weights (20 per present figure / 25 website / 15 services)
+    # are unchanged; this rebuild only guards against missing columns, which
+    # previously raised AttributeError on a directory-only frame.
+    evidence_cols = ["founding_year", "employee_count_est", "technician_count_est"]
+    present = scored.reindex(columns=evidence_cols).notna().sum(axis=1)
+    if "website_status" in scored.columns:
+        website_ok = scored["website_status"].astype(str).eq("ok")
+    else:
+        website_ok = pd.Series(False, index=scored.index)
+    if "service_keyword_count" in scored.columns:
+        keyword_positive = pd.to_numeric(scored["service_keyword_count"], errors="coerce").fillna(0).gt(0)
+    else:
+        keyword_positive = pd.Series(False, index=scored.index)
     scored["data_confidence"] = (
-        scored[["founding_year", "employee_count_est", "technician_count_est"]]
-        .notna()
-        .sum(axis=1)
-        .mul(20)
-        + scored.get("website_status", "").eq("ok").mul(25)
-        + scored.get("service_keyword_count", 0).gt(0).mul(15)
+        present.mul(20) + website_ok.mul(25) + keyword_positive.mul(15)
     ).clip(upper=100)
     return scored.sort_values(["priority_score", "data_confidence"], ascending=False)
 
@@ -595,24 +752,136 @@ def load_sources(path: str | None) -> tuple[DirectorySource, ...]:
     return tuple(sources)
 
 
-def clean_and_deduplicate(records: list[dict[str, str]]) -> pd.DataFrame:
-    if not records:
+def clean_and_deduplicate(records: list[dict[str, Any]]) -> pd.DataFrame:
+    """Normalize, filter, and deduplicate directory records with an audit trail.
+
+    Two records merge when they share any non-empty signal: registrable domain,
+    canonical phone, name slug, or normalized address. Merges are deterministic
+    (stable union-find over the input order) and every surviving row records
+    ``duplicate_count``, ``merged_from`` (the names it absorbed), and
+    ``merge_reason`` (which signals matched). Nothing is dropped silently.
+    """
+    cleaned: list[dict[str, Any]] = []
+    for raw in records:
+        row: dict[str, Any] = dict(raw)
+        name = normalize_name(str(row.get("company_name", "")))
+        if not 3 <= len(name) <= 120:
+            continue
+        combined = " ".join(
+            [name, str(row.get("directory_text", "")), str(row.get("address", ""))]
+        ).lower()
+        if any(keyword in combined for keyword in EXCLUDE_KEYWORDS):
+            continue
+        url = canonicalize_url(str(row.get("company_url", "")))
+        row["company_name"] = name
+        row["company_url"] = url
+        row["domain"] = registrable_domain(url)
+        cleaned.append(row)
+
+    if not cleaned:
         return pd.DataFrame()
-    frame = pd.DataFrame(records).fillna("")
-    frame["company_name"] = frame["company_name"].map(normalize_name)
-    frame["company_url"] = frame["company_url"].map(canonicalize_url)
-    frame["domain"] = frame["company_url"].map(registrable_domain)
-    frame["combined_text"] = (
-        frame["company_name"] + " " + frame["directory_text"] + " " + frame["address"]
-    ).str.lower()
-    frame = frame[~frame["combined_text"].apply(lambda text: any(x in text for x in EXCLUDE_KEYWORDS))]
-    frame = frame[frame["company_name"].str.len().between(3, 120)]
-    frame["dedupe_key"] = frame.apply(
-        lambda r: r["domain"] or re.sub(r"\W+", "", r["company_name"].lower()), axis=1
-    )
-    frame = frame.sort_values("company_url", key=lambda s: s.eq(""))
-    frame = frame.drop_duplicates("dedupe_key", keep="first")
-    return frame.drop(columns=["combined_text", "dedupe_key"])
+
+    n = len(cleaned)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    key_specs: list[tuple[str, list[str]]] = [
+        ("domain", [str(r.get("domain", "")) for r in cleaned]),
+        (
+            "phone",
+            [canonical_phone(str(r.get("phone_canonical") or r.get("primary_phone", ""))) for r in cleaned],
+        ),
+        ("name", [name_slug(str(r.get("company_name", ""))) for r in cleaned]),
+        ("address", [normalize_address(str(r.get("address", ""))) for r in cleaned]),
+    ]
+
+    edges: list[tuple[int, int, str]] = []
+    for key_type, values in key_specs:
+        first_seen: dict[str, int] = {}
+        for idx, value in enumerate(values):
+            if not value:
+                continue
+            if value in first_seen:
+                edges.append((first_seen[value], idx, key_type))
+            else:
+                first_seen[value] = idx
+
+    for a, b, _reason in edges:
+        union(a, b)
+
+    root_reasons: dict[int, set[str]] = defaultdict(set)
+    for a, _b, reason in edges:
+        root_reasons[find(a)].add(reason)
+
+    groups: dict[int, list[int]] = defaultdict(list)
+    for idx in range(n):
+        groups[find(idx)].append(idx)
+
+    survivors: list[tuple[int, dict[str, Any]]] = []
+    for root, members in groups.items():
+        representative = min(
+            members,
+            key=lambda i: (cleaned[i].get("company_url", "") == "", cleaned[i].get("domain", "") == "", i),
+        )
+        rep_row = dict(cleaned[representative])
+        absorbed = sorted(
+            str(cleaned[i]["company_name"]) for i in members if i != representative
+        )
+        rep_row["duplicate_count"] = len(members)
+        rep_row["merged_from"] = "; ".join(absorbed)
+        rep_row["merge_reason"] = ", ".join(sorted(root_reasons[root])) if len(members) > 1 else ""
+        survivors.append((representative, rep_row))
+
+    survivors.sort(key=lambda pair: pair[0])
+    return pd.DataFrame([row for _index, row in survivors])
+
+
+def enrich_and_score(
+    fetcher: HtmlFetcher,
+    cleaned: pd.DataFrame,
+    workers: int,
+    verified_on: str,
+) -> pd.DataFrame:
+    """Enrich each deduplicated record through ``fetcher`` and score the result.
+
+    A single enrichment failure is isolated to its own row (marked ``error``) and
+    never aborts the run. Shared by the live and offline paths so both exercise
+    the identical enrichment/scoring code.
+    """
+    rows: list[dict[str, Any]] = [
+        {str(key): value for key, value in record.items()}
+        for record in cleaned.to_dict(orient="records")
+    ]
+    enriched: list[dict[str, Any]] = []
+    with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        future_map = {
+            executor.submit(enrich_company, fetcher, row, verified_on): row for row in rows
+        }
+        for future in futures.as_completed(future_map):
+            try:
+                enriched.append(future.result())
+            except Exception as exc:  # last-resort isolation; one target must not kill the run
+                failed = dict(future_map[future])
+                failed.update(
+                    {
+                        "website_status": "error",
+                        "enrichment_error": str(exc)[:300],
+                        "evidence_summary": "",
+                        "verification_date": verified_on,
+                    }
+                )
+                enriched.append(failed)
+    return apply_scoring(pd.DataFrame(enriched))
 
 
 def main() -> None:
@@ -623,18 +892,33 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--delay-seconds", type=float, default=0.5)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--offline-demo",
+        action="store_true",
+        help="Generate a target file from bundled synthetic fixtures with no network access.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    session = build_session()
-    sources = load_sources(args.source_config)
 
-    raw_records: list[dict[str, str]] = []
-    for source in sources:
-        raw_records.extend(scrape_source(session, source, args.delay_seconds))
+    verified_on = date.today().isoformat()
+    fetcher: HtmlFetcher
+    if args.offline_demo:
+        from sourcing_fixtures import build_offline_dataset
+
+        raw_records, pages, blocked, errors = build_offline_dataset()
+        fetcher = OfflineFetcher(pages, blocked, errors)
+        LOGGER.info("Offline demo: %s synthetic directory records (no network)", len(raw_records))
+    else:
+        session = build_session()
+        fetcher = NetworkFetcher(session, args.delay_seconds)
+        sources = load_sources(args.source_config)
+        raw_records = []
+        for source in sources:
+            raw_records.extend(scrape_source(fetcher, source))
 
     cleaned = clean_and_deduplicate(raw_records)
     if cleaned.empty:
@@ -643,22 +927,7 @@ def main() -> None:
         )
 
     LOGGER.info("Collected %s unique directory records; enriching websites", len(cleaned))
-    rows = cleaned.to_dict(orient="records")
-    enriched: list[dict[str, object]] = []
-    with futures.ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
-        future_map = {
-            executor.submit(enrich_company, build_session(), row, args.delay_seconds): row
-            for row in rows
-        }
-        for future in futures.as_completed(future_map):
-            try:
-                enriched.append(future.result())
-            except Exception as exc:  # last-resort isolation; individual targets should not kill the run
-                failed = dict(future_map[future])
-                failed.update({"website_status": "error", "enrichment_error": str(exc)[:300]})
-                enriched.append(failed)
-
-    scored = apply_scoring(pd.DataFrame(enriched))
+    scored = enrich_and_score(fetcher, cleaned, args.workers, verified_on)
     scored["scraped_at_utc"] = datetime.now(UTC).isoformat()
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
