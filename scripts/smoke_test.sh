@@ -6,4 +6,5 @@ python buy_and_build_model.py --output-dir outputs/model >/tmp/project-copperlin
 pytest -q
 
 echo "Smoke test passed."
-echo "Model output: outputs/model/five_year_pro_forma.csv"
+echo "Model output: outputs/model/base/five_year_pro_forma.csv"
+echo "Scenario comparison: outputs/model/scenario_comparison.csv"

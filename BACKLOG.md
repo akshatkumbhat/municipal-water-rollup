@@ -55,7 +55,45 @@ Acceptance criteria:
 - Network failures, robots denial, and malformed pages fail gracefully.
 
 ## Phase 3 — Buy-and-build model
-**Status:** NOT STARTED
+**Status:** DONE (2026-07-31)
+
+Delivered: scenarios are now data (`Scenario` registry plus `--scenario-file`
+JSON with override-only semantics and unknown-key rejection), so base/downside/
+upside are configurable without touching a formula. `downside` is the
+blueprint's IC guardrail case verbatim (3% growth, half synergy capture, 9%
+interest, 6.0x mark); `upside` is author-defined and marked as such, and is
+operational only — the exit mark is held at 6.5x rather than re-rated.
+Added explicit per-closing sources and uses, a return bridge that reconciles to
+the exit equity value as an identity, and exit-multiple × organic-growth
+sensitivity grids for MOIC and IRR. Test count 46 → 97, all network-free.
+
+Six defects found and fixed, all with the base case held at MOIC 4.5388573508 /
+IRR 0.3532851206 / ending debt 1.5602039747 (golden test):
+1. No sources and uses existed; add-on funding was implicit.
+2. Add-ons were unconditionally 100% debt-funded while the docstring claimed
+   they were "subject to the modeled pro-forma leverage profile" — an
+   unsupported claim. Added a `max_pro_forma_leverage` governor (4.0x default,
+   inert in the base case) that funds the overflow with sponsor equity.
+3. `gross_irr` was `moic ** (1/n) - 1`, a CAGR valid only for a single t0
+   equity flow. Replaced with a bisection IRR over the actual equity vector;
+   identical in the base case, materially different once equity is staged.
+4. Free cash flow vanished once debt hit zero (no cash balance). Cash now
+   accumulates and a shortfall draws the revolver.
+5. `Net Leverage` was gross leverage; both are now reported and correct.
+6. The circularity solve computed FCF twice and discarded the first result.
+   Consolidated into `solve_year_cash`, with a documented closed form, a
+   zero-tax re-solve branch, and per-year reconciliation tests.
+
+Evidence: `ruff check .`, `mypy` (4 files), `pytest` (97 passed),
+`make model`, and `scripts/smoke_test.sh` all green. Base 4.54x / 35.3%,
+downside 3.58x / 29.1%, upside 5.12x / 38.6%.
+
+Open risk for Phase 6: the blueprint's downside still returns 3.58x because it
+stresses only growth, synergy capture, interest, and the exit mark — not the
+entry multiple, platform margin, or add-on execution. An IC would push on that.
+Also note year-end leverage peaks at 2.30x (the blueprint's "below 2.5x" claim
+holds) but close-date leverage is 3.0x by construction; the blueprint sentence
+should be read as post-close.
 
 Acceptance criteria:
 - Base, downside, and optional upside scenarios are configurable without editing formulas.

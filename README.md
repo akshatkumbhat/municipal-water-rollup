@@ -75,16 +75,71 @@ Records are merged when they share any of four signals — registrable **domain*
 ## 2. Run the buy-and-build model
 
 ```bash
-python buy_and_build_model.py --output-dir outputs/model
+python buy_and_build_model.py --output-dir outputs/model          # all scenarios
+python buy_and_build_model.py --scenario downside                 # one scenario
+python buy_and_build_model.py --scenario-file scenarios.json      # custom cases
 ```
 
-Outputs:
+Each scenario writes a directory under the output directory:
 
-- `five_year_pro_forma.csv`
-- `return_summary.json`
-- `assumptions.json`
+- `five_year_pro_forma.csv` — operating, debt, and cash schedule
+- `sources_and_uses.csv` — per-closing purchase price, fees, debt, and equity
+- `return_bridge.csv` — entry equity to exit equity walk
+- `sensitivity_moic.csv` / `sensitivity_irr.csv` — exit multiple × organic growth
+- `return_summary.json`, `assumptions.json`
 
-The base case uses a $10.0M-revenue platform, three add-ons, 5% organic growth, 15% add-on SG&A consolidation, an 8% interest rate, and a 6.5x year-five valuation mark.
+`scenario_comparison.csv` sits at the top level.
+
+### Scenarios
+
+| Scenario | Growth | SG&A synergy capture | Interest | Exit mark | Source |
+|---|---:|---:|---:|---:|---|
+| `base` | 5.0% | 15% | 8.0% | 6.5x | Blueprint operating assumptions |
+| `downside` | 3.0% | 7.5% | 9.0% | 6.0x | Blueprint IC guardrails |
+| `upside` | 7.0% | 20% | 7.5% | 6.5x | Author-defined |
+
+The base case uses a $10.0M-revenue platform and three add-ons. The upside case
+is deliberately **operational only** — it holds the exit mark at the base-case
+6.5x, because multiple re-rating is the least defensible driver in the
+value-creation bridge. It is marked as author-defined in `assumptions.json`;
+the blueprint does not specify an upside.
+
+Custom scenarios need no code change. A `--scenario-file` entry supplies
+overrides only; omitted keys keep their base value, and unknown keys raise:
+
+```json
+{"scenarios": [{"name": "credit-stress",
+                "description": "12% interest, no add-ons",
+                "assumptions": {"interest_rate": 0.12},
+                "add_ons": []}]}
+```
+
+### Modeling conventions
+
+- The platform closes at time zero; add-ons close at the start of their year.
+- Add-on uses are funded with debt up to `max_pro_forma_leverage` (4.0x) and
+  with sponsor equity beyond it, in close order. The governor does not bind in
+  the base case — year-end leverage peaks at 2.30x — so the documented
+  economics are unchanged, but it prevents leverage-stress cases from being
+  financed on debt that no lender would provide.
+- Interest accrues on average debt; the resulting interest/tax/cash-sweep
+  circularity is solved in closed form, not iterated. Every schedule line
+  reconciles to an identity that the test suite checks.
+- All levered free cash flow sweeps to debt. Cash accumulates only after debt
+  is fully repaid; a cash shortfall draws the revolver rather than producing
+  negative cash.
+- IRR is solved on the actual equity cash-flow vector, so staged equity is
+  priced correctly. The Year-5 value is a valuation mark, not a forced sale.
+
+### Return bridge
+
+The bridge is an identity, not an attribution heuristic — its components sum to
+the exit equity value exactly. In the base case, $6.24M of entry equity becomes
+$28.32M: $4.01M platform organic growth, $0.66M add-on organic growth, $1.22M
+synergies, $7.05M multiple change, $9.47M net debt paydown, less $0.34M of
+transaction fees. EBITDA growth is valued at the **blended** entry multiple
+(4.97x), so multiple arbitrage between the 6.0x platform and the 3.5x add-ons
+is embedded in that entry multiple rather than double-counted as its own line.
 
 ## 3. Launch the operating dashboard
 
