@@ -1,4 +1,4 @@
-.PHONY: install install-dev test lint format model dashboard sourcing smoke clean
+.PHONY: install install-dev test lint format model dashboard operating sourcing smoke clean
 
 install:
 	python -m pip install -r requirements.txt
@@ -12,8 +12,8 @@ format:
 
 lint:
 	ruff check .
-	python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py
-	mypy sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py sourcing_fixtures.py
+	python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py operations_kpis.py
+	mypy sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py sourcing_fixtures.py operations_kpis.py
 
 test:
 	pytest
@@ -24,6 +24,9 @@ model:
 dashboard:
 	streamlit run operations_dashboard.py
 
+operating:
+	python operations_kpis.py --output-dir outputs/operations
+
 sourcing:
 	python sourcing_pipeline.py --output outputs/targets.csv --min-targets 50
 
@@ -31,4 +34,4 @@ smoke:
 	bash scripts/smoke_test.sh
 
 clean:
-	rm -rf .pytest_cache .ruff_cache __pycache__ tests/__pycache__ outputs/model
+	rm -rf .pytest_cache .ruff_cache __pycache__ tests/__pycache__ outputs/model outputs/operations

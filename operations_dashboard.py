@@ -1,21 +1,45 @@
-"""Executive operating dashboard for a municipal water/wastewater services platform.
+"""Executive operating cockpit for the municipal water/wastewater platform.
 
 Run:
     streamlit run operations_dashboard.py
 
-The app is self-contained and generates realistic sample data when no CSV is
-uploaded. An uploaded CSV should follow the schema shown in the sidebar help.
+This module is a presentation layer only. Every number it renders is computed
+in `operations_kpis`, which has no UI dependency and is covered by unit tests;
+nothing is calculated inline here. Financial figures (plan, debt, leverage,
+liquidity, synergies) are read from the Phase 3 model rather than re-derived,
+and are labelled `Modelled` wherever they appear.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+from buy_and_build_model import SCENARIOS, run_scenario
+from operations_kpis import (
+    METRIC_DEFINITIONS,
+    REQUIRED_COLUMNS,
+    Thresholds,
+    assign_model_period,
+    available_dimensions,
+    capital_structure_view,
+    dimension_rollup,
+    exception_report,
+    filter_operating_data,
+    generate_sample_data,
+    has_grr_inputs,
+    kpi_summary,
+    metric_definitions_table,
+    monthly_rollup,
+    organic_growth_view,
+    period_comparison,
+    plan_vs_actual,
+    resolve_model_anchor,
+    synergy_realization_view,
+    validate_operating_data,
+)
 
 st.set_page_config(
     page_title="Water Infrastructure Services | COO Dashboard",
@@ -23,358 +47,535 @@ st.set_page_config(
     layout="wide",
 )
 
-REQUIRED_COLUMNS = {
-    "month",
-    "region",
-    "service_line",
-    "revenue",
-    "gross_profit",
-    "ebitda",
-    "paid_hours",
-    "billable_hours",
-    "completed_jobs",
-    "route_miles",
-    "active_customers",
-    "lost_customers",
-    "recurring_revenue",
-    "capex",
-    "cash_taxes",
-    "cash_interest",
-    "delta_nwc",
-    "accounts_receivable",
-}
-
-
-@dataclass(frozen=True)
-class Thresholds:
-    route_density: float = 7.0  # completed jobs per 100 route miles
-    utilization: float = 0.72
-    gross_margin: float = 0.42
-    recurring_mix: float = 0.60
-    monthly_churn: float = 0.008
-    fcf_conversion: float = 0.55
-
-
 @st.cache_data(show_spinner=False)
-def generate_sample_data(seed: int = 17) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    months = pd.date_range("2023-01-01", periods=42, freq="MS")
-    regions = ["Midwest", "Southeast", "Mid-Atlantic", "Mountain West"]
-    services = [
-        "CCTV & Condition Assessment",
-        "Leak Detection",
-        "Valve & Hydrant Programs",
-        "Cleaning & Jetting",
-        "Compliance Sampling",
-    ]
-    service_margin = {
-        "CCTV & Condition Assessment": 0.48,
-        "Leak Detection": 0.52,
-        "Valve & Hydrant Programs": 0.44,
-        "Cleaning & Jetting": 0.38,
-        "Compliance Sampling": 0.55,
-    }
-    service_recurring = {
-        "CCTV & Condition Assessment": 0.48,
-        "Leak Detection": 0.42,
-        "Valve & Hydrant Programs": 0.72,
-        "Cleaning & Jetting": 0.58,
-        "Compliance Sampling": 0.86,
-    }
-    rows: list[dict[str, object]] = []
-    for month_index, month in enumerate(months):
-        seasonality = 1 + 0.07 * np.sin((month.month - 3) / 12 * 2 * np.pi)
-        trend = (1.012) ** month_index
-        for region_index, region in enumerate(regions):
-            region_scale = 1 + 0.10 * region_index
-            for service_index, service in enumerate(services):
-                base_revenue = 90_000 + 14_000 * service_index
-                revenue = base_revenue * trend * seasonality * region_scale * rng.normal(1, 0.06)
-                gross_margin = np.clip(
-                    service_margin[service] + 0.0009 * month_index + rng.normal(0, 0.015),
-                    0.28,
-                    0.65,
-                )
-                gross_profit = revenue * gross_margin
-                ebitda_margin = np.clip(0.17 + 0.0007 * month_index + rng.normal(0, 0.012), 0.10, 0.28)
-                ebitda = revenue * ebitda_margin
-                jobs = max(12, int(revenue / rng.uniform(2_800, 4_500)))
-                route_miles = jobs * rng.uniform(9, 15) * (1 - min(month_index * 0.002, 0.07))
-                paid_hours = jobs * rng.uniform(11, 16)
-                utilization = np.clip(0.67 + 0.0015 * month_index + rng.normal(0, 0.025), 0.52, 0.86)
-                billable_hours = paid_hours * utilization
-                active_customers = int(42 + region_index * 7 + service_index * 4 + month_index * 0.5)
-                churn_rate = np.clip(0.012 - month_index * 0.00012 + rng.normal(0, 0.002), 0.002, 0.025)
-                lost_customers = int(round(active_customers * churn_rate))
-                recurring_revenue = revenue * np.clip(
-                    service_recurring[service] + month_index * 0.0015 + rng.normal(0, 0.015),
-                    0.25,
-                    0.95,
-                )
-                capex = revenue * rng.uniform(0.025, 0.038)
-                cash_interest = ebitda * rng.uniform(0.10, 0.17)
-                cash_taxes = max((ebitda - capex - cash_interest) * 0.25, 0)
-                delta_nwc = max(revenue * rng.normal(0.008, 0.005), -revenue * 0.004)
-                dso = np.clip(58 - month_index * 0.25 + rng.normal(0, 4), 32, 78)
-                accounts_receivable = revenue * dso / month.days_in_month
-                rows.append(
-                    {
-                        "month": month,
-                        "region": region,
-                        "service_line": service,
-                        "revenue": revenue,
-                        "gross_profit": gross_profit,
-                        "ebitda": ebitda,
-                        "paid_hours": paid_hours,
-                        "billable_hours": billable_hours,
-                        "completed_jobs": jobs,
-                        "route_miles": route_miles,
-                        "active_customers": active_customers,
-                        "lost_customers": lost_customers,
-                        "recurring_revenue": recurring_revenue,
-                        "capex": capex,
-                        "cash_taxes": cash_taxes,
-                        "cash_interest": cash_interest,
-                        "delta_nwc": delta_nwc,
-                        "accounts_receivable": accounts_receivable,
-                    }
-                )
-    return pd.DataFrame(rows)
+def _sample_data(scenario_name: str) -> pd.DataFrame:
+    return validate_operating_data(generate_sample_data(scenario_name=scenario_name))
 
 
-def validate_data(frame: pd.DataFrame) -> pd.DataFrame:
-    missing = REQUIRED_COLUMNS - set(frame.columns)
-    if missing:
-        raise ValueError(f"CSV is missing required columns: {sorted(missing)}")
-    result = frame.copy()
-    result["month"] = pd.to_datetime(result["month"], errors="raise").dt.to_period("M").dt.to_timestamp()
-    numeric_columns = REQUIRED_COLUMNS - {"month", "region", "service_line"}
-    for column in numeric_columns:
-        result[column] = pd.to_numeric(result[column], errors="coerce")
-    if result[list(numeric_columns)].isna().any().any():
-        bad = result[list(numeric_columns)].columns[result[list(numeric_columns)].isna().any()].tolist()
-        raise ValueError(f"Non-numeric or missing values detected in: {bad}")
-    if (result[["revenue", "paid_hours", "route_miles", "active_customers"]] < 0).any().any():
-        raise ValueError("Revenue, hours, route miles, and active customers cannot be negative")
-    return result
+def _format_value(value: float, unit: str) -> str:
+    if pd.isna(value):
+        return "n/a"
+    if unit == "percent":
+        return f"{value:.1%}"
+    if unit == "days":
+        return f"{value:.1f} d"
+    return f"{value:.2f}"
 
 
-def safe_divide(numerator: pd.Series | float, denominator: pd.Series | float) -> pd.Series | float:
-    if isinstance(denominator, pd.Series):
-        return numerator / denominator.replace(0, np.nan)
-    return numerator / denominator if denominator else np.nan
-
-
-def monthly_rollup(frame: pd.DataFrame) -> pd.DataFrame:
-    numeric = [c for c in frame.columns if c not in {"month", "region", "service_line"}]
-    result = frame.groupby("month", as_index=False)[numeric].sum()
-    result["route_density"] = safe_divide(result["completed_jobs"] * 100, result["route_miles"])
-    result["utilization"] = safe_divide(result["billable_hours"], result["paid_hours"])
-    result["gross_margin"] = safe_divide(result["gross_profit"], result["revenue"])
-    result["recurring_mix"] = safe_divide(result["recurring_revenue"], result["revenue"])
-    result["monthly_churn"] = safe_divide(result["lost_customers"], result["active_customers"])
-    result["free_cash_flow"] = (
-        result["ebitda"]
-        - result["capex"]
-        - result["cash_taxes"]
-        - result["cash_interest"]
-        - result["delta_nwc"]
-    )
-    result["fcf_conversion"] = safe_divide(result["free_cash_flow"], result["ebitda"])
-    days = result["month"].dt.days_in_month
-    result["dso"] = safe_divide(result["accounts_receivable"] * days, result["revenue"])
-    result["ebitda_margin"] = safe_divide(result["ebitda"], result["revenue"])
-    return result
-
-
-def period_kpi(frame: pd.DataFrame, column: str, months: int = 3) -> tuple[float, float | None]:
-    frame = frame.sort_values("month")
-    current = frame.tail(months)[column].mean()
-    prior_slice = frame.iloc[-2 * months : -months]
-    prior = prior_slice[column].mean() if len(prior_slice) == months else None
-    return float(current), float(prior) if prior is not None else None
-
-
-def delta_text(current: float, prior: float | None, percent: bool = False, inverse: bool = False) -> str | None:
-    if prior is None or np.isnan(prior):
+def _format_delta(change: float, unit: str) -> str | None:
+    if pd.isna(change):
         return None
-    change = current - prior
-    if inverse:
-        change *= -1
-    return f"{change:+.1%}" if percent else f"{change:+.2f}"
+    if unit == "percent":
+        return f"{change:+.1%} vs prior"
+    if unit == "days":
+        return f"{change:+.1f} d vs prior"
+    return f"{change:+.2f} vs prior"
 
 
-def metric_card(label: str, value: str, delta: str | None, help_text: str) -> None:
-    st.metric(label, value, delta=delta, help=help_text)
+def _money_millions(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    out = frame.copy()
+    for column in columns:
+        out[column] = out[column] / 1_000_000.0
+    return out
 
 
 def main() -> None:
     st.title("Municipal Water & Wastewater Services — COO Dashboard")
-    st.caption("Operating cadence: route economics, field labor, retention, margin, and cash conversion.")
+    st.caption(
+        "Operating cadence: route economics, field labor, retention, margin, and cash "
+        "conversion. All monetary values in USD unless labelled ($M)."
+    )
 
+    # ---------------- Sidebar: data source, scenario, filters ----------------
     with st.sidebar:
-        st.header("Data")
+        st.header("Data source")
         uploaded = st.file_uploader("Upload monthly operating CSV", type=["csv"])
         with st.expander("Required CSV schema"):
             st.code(", ".join(sorted(REQUIRED_COLUMNS)), language="text")
-        st.caption("No upload is required; the dashboard opens with a deterministic sample dataset.")
+            st.caption(
+                "Optional columns: business_unit (unlocks platform vs add-on views), "
+                "lost_recurring_revenue (unlocks gross revenue retention)."
+            )
+        scenario_name = st.selectbox(
+            "Model scenario for plan and capital structure",
+            sorted(SCENARIOS),
+            index=sorted(SCENARIOS).index("base"),
+            help="Drives modelled sections only. Governing KPIs are always actuals.",
+        )
+        window = st.slider("Comparison window (months)", 1, 6, 3)
 
     try:
-        source = pd.read_csv(uploaded) if uploaded else generate_sample_data()
-        data = validate_data(source)
-    except Exception as exc:
+        if uploaded is not None:
+            data = validate_operating_data(pd.read_csv(uploaded))
+            source_label = f"Uploaded file — {uploaded.name}"
+            source_kind = "Actual (uploaded)"
+        else:
+            data = _sample_data(scenario_name)
+            source_label = "Deterministic sample dataset"
+            source_kind = "SAMPLE (synthetic, calibrated to the Phase 3 base case)"
+    except Exception as exc:  # surfaced to the user, never swallowed
         st.error(f"Data validation failed: {exc}")
+        st.info("Fix the file and re-upload, or clear the upload to use sample data.")
         st.stop()
 
+    dimensions = available_dimensions(data)
+
+    # Resolve the model anchor from the FULL dataset and stamp every row with
+    # its model year before any filter narrows the frame. Doing this after
+    # filtering would relabel a mid-horizon selection as Model Year 1.
     with st.sidebar:
-        min_month, max_month = data["month"].min().date(), data["month"].max().date()
+        st.header("Model period")
+        default_anchor = resolve_model_anchor(data).anchor
+        anchor_input = st.date_input(
+            "Model Year 1 begins",
+            value=default_anchor.date(),
+            help=(
+                "Anchors the mapping of calendar months to model years. Fixed "
+                "independently of the reporting-period filter below. Defaults to "
+                "the earliest month in the dataset."
+            ),
+        )
+    try:
+        period = resolve_model_anchor(data, pd.Timestamp(anchor_input))
+    except ValueError as exc:
+        st.error(f"Invalid model start date: {exc}")
+        st.stop()
+
+    data = assign_model_period(data, period)
+
+    with st.sidebar:
+        st.header("Filters")
+        min_month = data["month"].min().date()
+        max_month = data["month"].max().date()
         date_range = st.date_input(
             "Reporting period",
             value=(min_month, max_month),
             min_value=min_month,
             max_value=max_month,
         )
-        region_options = sorted(data["region"].unique())
-        service_options = sorted(data["service_line"].unique())
-        selected_regions = st.multiselect("Regions", region_options, default=region_options)
-        selected_services = st.multiselect("Service lines", service_options, default=service_options)
+        regions = sorted(data["region"].unique())
+        services = sorted(data["service_line"].unique())
+        selected_regions = st.multiselect("Regions", regions, default=regions)
+        selected_services = st.multiselect("Service lines", services, default=services)
+        if "business_unit" in dimensions:
+            units = sorted(data["business_unit"].unique())
+            selected_units = st.multiselect("Business units", units, default=units)
+        else:
+            selected_units = None
 
-    if len(date_range) != 2:
-        st.warning("Select a start and end date.")
+    if not isinstance(date_range, tuple) or len(date_range) != 2:
+        st.warning("Select both a start and an end date to continue.")
         st.stop()
-    start_date, end_date = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
-    filtered = data[
-        data["month"].between(start_date, end_date)
-        & data["region"].isin(selected_regions)
-        & data["service_line"].isin(selected_services)
-    ].copy()
+
+    filtered = filter_operating_data(
+        data,
+        start=pd.Timestamp(date_range[0]),
+        end=pd.Timestamp(date_range[1]),
+        regions=selected_regions,
+        service_lines=selected_services,
+        business_units=selected_units,
+    )
+
     if filtered.empty:
-        st.warning("No data matches the selected filters.")
+        st.warning(
+            "No rows match the selected filters. Widen the date range or re-select "
+            "regions, service lines, or business units."
+        )
         st.stop()
 
     monthly = monthly_rollup(filtered)
     thresholds = Thresholds()
+    result = run_scenario(SCENARIOS[scenario_name])
 
-    kpis = {
-        "route_density": period_kpi(monthly, "route_density"),
-        "utilization": period_kpi(monthly, "utilization"),
-        "gross_margin": period_kpi(monthly, "gross_margin"),
-        "recurring_mix": period_kpi(monthly, "recurring_mix"),
-        "monthly_churn": period_kpi(monthly, "monthly_churn"),
-        "fcf_conversion": period_kpi(monthly, "fcf_conversion"),
-    }
+    # ---------------- Provenance banner ----------------
+    st.info(
+        f"**Data source:** {source_label}  \n"
+        f"**Provenance:** {source_kind}  \n"
+        f"**Period shown:** {filtered['month'].min():%b %Y} – {filtered['month'].max():%b %Y} "
+        f"({monthly.shape[0]} months, {len(filtered):,} rows)  \n"
+        f"**Modelled sections use:** Phase 3 `{scenario_name}` scenario — "
+        f"{SCENARIOS[scenario_name].description}"
+    )
 
-    cols = st.columns(6)
-    with cols[0]:
-        cur, prior = kpis["route_density"]
-        metric_card("Route density", f"{cur:.1f}", delta_text(cur, prior), "Completed jobs per 100 route miles; higher is better.")
-    with cols[1]:
-        cur, prior = kpis["utilization"]
-        metric_card("Billable utilization", f"{cur:.1%}", delta_text(cur, prior, percent=True), "Billable field hours divided by paid field hours.")
-    with cols[2]:
-        cur, prior = kpis["gross_margin"]
-        metric_card("Gross margin", f"{cur:.1%}", delta_text(cur, prior, percent=True), "Revenue less direct labor, materials, and subcontractors.")
-    with cols[3]:
-        cur, prior = kpis["recurring_mix"]
-        metric_card("Recurring revenue", f"{cur:.1%}", delta_text(cur, prior, percent=True), "Revenue under recurring inspection, maintenance, sampling, or monitoring programs.")
-    with cols[4]:
-        cur, prior = kpis["monthly_churn"]
-        metric_card("Monthly churn", f"{cur:.2%}", delta_text(cur, prior, percent=True, inverse=True), "Lost customers divided by active customers; lower is better.")
-    with cols[5]:
-        cur, prior = kpis["fcf_conversion"]
-        metric_card("FCF conversion", f"{cur:.1%}", delta_text(cur, prior, percent=True), "Levered free cash flow divided by EBITDA.")
+    # ---------------- KPI cards ----------------
+    st.subheader("Governing KPIs")
+    st.caption(
+        f"Trailing {window}-month window versus the preceding {window} months. "
+        "Ratios are computed from summed numerators and denominators, not as an "
+        "average of monthly ratios. Targets are author-defined."
+    )
+    cards = st.columns(len(METRIC_DEFINITIONS))
+    for column, metric in zip(cards, METRIC_DEFINITIONS, strict=True):
+        comparison = period_comparison(monthly, metric, thresholds, window=window)
+        with column:
+            st.metric(
+                label=metric.label,
+                value=_format_value(comparison.current, metric.unit),
+                delta=_format_delta(comparison.change, metric.unit),
+                delta_color="inverse" if metric.direction == "lower" else "normal",
+                help=(
+                    f"{metric.definition}\n\n"
+                    f"Formula: ({metric.numerator}) / ({metric.denominator})\n\n"
+                    f"Target: {_format_value(comparison.target, metric.unit)} "
+                    f"({'higher' if metric.direction == 'higher' else 'lower'} is better)\n\n"
+                    f"Source: {metric.provenance}"
+                ),
+            )
+            status = "On track" if comparison.on_track else "Management action"
+            st.caption(
+                f"{'✅' if comparison.on_track else '⚠️'} {status} · "
+                f"target {_format_value(comparison.target, metric.unit)}"
+            )
+
+    if not has_grr_inputs(filtered):
+        st.caption(
+            "Gross revenue retention is not shown: this dataset has no "
+            "`lost_recurring_revenue` column. Customer churn is reported instead."
+        )
 
     st.divider()
-    left, right = st.columns((1.55, 1))
-    with left:
-        financial = monthly.melt(
-            id_vars="month",
-            value_vars=["revenue", "ebitda", "free_cash_flow"],
-            var_name="metric",
-            value_name="value",
-        )
-        fig = px.line(financial, x="month", y="value", color="metric", markers=True, title="Revenue, EBITDA, and free cash flow")
-        fig.update_layout(yaxis_title="$", xaxis_title="", legend_title_text="")
-        st.plotly_chart(fig, use_container_width=True)
-    with right:
-        service = filtered.groupby("service_line", as_index=False).agg(revenue=("revenue", "sum"), gross_profit=("gross_profit", "sum"))
-        service["gross_margin"] = safe_divide(service["gross_profit"], service["revenue"])
-        fig = px.bar(service.sort_values("gross_margin"), x="gross_margin", y="service_line", orientation="h", text_auto=".1%", title="Gross margin by service line")
-        fig.update_layout(xaxis_tickformat=".0%", xaxis_title="Gross margin", yaxis_title="")
-        st.plotly_chart(fig, use_container_width=True)
 
-    left, right = st.columns(2)
-    with left:
-        ops = monthly.melt(
-            id_vars="month",
-            value_vars=["route_density", "utilization"],
-            var_name="metric",
-            value_name="value",
-        )
-        fig = px.line(ops, x="month", y="value", color="metric", markers=True, title="Field productivity trend")
-        fig.add_hline(y=thresholds.utilization, line_dash="dot", annotation_text="Utilization target")
-        fig.update_layout(xaxis_title="", yaxis_title="Mixed units", legend_title_text="")
-        st.plotly_chart(fig, use_container_width=True)
-    with right:
-        retention = monthly.melt(
-            id_vars="month",
-            value_vars=["recurring_mix", "monthly_churn"],
-            var_name="metric",
-            value_name="value",
-        )
-        fig = px.line(retention, x="month", y="value", color="metric", markers=True, title="Revenue durability")
-        fig.update_layout(xaxis_title="", yaxis_tickformat=".0%", yaxis_title="Rate", legend_title_text="")
-        st.plotly_chart(fig, use_container_width=True)
-
-    left, right = st.columns(2)
-    with left:
-        region = filtered.groupby("region", as_index=False).agg(
-            revenue=("revenue", "sum"),
-            ebitda=("ebitda", "sum"),
-            paid_hours=("paid_hours", "sum"),
-            billable_hours=("billable_hours", "sum"),
-        )
-        region["ebitda_margin"] = safe_divide(region["ebitda"], region["revenue"])
-        region["utilization"] = safe_divide(region["billable_hours"], region["paid_hours"])
-        fig = px.scatter(
-            region,
-            x="utilization",
-            y="ebitda_margin",
-            size="revenue",
-            text="region",
-            title="Regional productivity versus EBITDA margin",
-        )
-        fig.update_traces(textposition="top center")
-        fig.update_layout(xaxis_tickformat=".0%", yaxis_tickformat=".0%", xaxis_title="Billable utilization", yaxis_title="EBITDA margin")
-        st.plotly_chart(fig, use_container_width=True)
-    with right:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(x=monthly["month"], y=monthly["dso"], name="DSO"))
-        fig.add_trace(go.Scatter(x=monthly["month"], y=monthly["fcf_conversion"], name="FCF conversion", yaxis="y2", mode="lines+markers"))
-        fig.update_layout(
-            title="Working capital and cash conversion",
-            xaxis_title="",
-            yaxis=dict(title="Days sales outstanding"),
-            yaxis2=dict(title="FCF conversion", overlaying="y", side="right", tickformat=".0%"),
-            legend=dict(orientation="h"),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Management exception report")
-    latest = monthly.sort_values("month").iloc[-1]
-    exceptions = pd.DataFrame(
+    tabs = st.tabs(
         [
-            ("Route density", latest["route_density"], thresholds.route_density, latest["route_density"] >= thresholds.route_density),
-            ("Billable utilization", latest["utilization"], thresholds.utilization, latest["utilization"] >= thresholds.utilization),
-            ("Gross margin", latest["gross_margin"], thresholds.gross_margin, latest["gross_margin"] >= thresholds.gross_margin),
-            ("Recurring revenue", latest["recurring_mix"], thresholds.recurring_mix, latest["recurring_mix"] >= thresholds.recurring_mix),
-            ("Monthly churn", latest["monthly_churn"], thresholds.monthly_churn, latest["monthly_churn"] <= thresholds.monthly_churn),
-            ("FCF conversion", latest["fcf_conversion"], thresholds.fcf_conversion, latest["fcf_conversion"] >= thresholds.fcf_conversion),
-        ],
-        columns=["KPI", "Latest", "Target", "On Track"],
+            "Performance",
+            "Growth & margin",
+            "Service line & region",
+            "Platform vs add-on",
+            "Capital structure (modelled)",
+            "Exceptions",
+            "Definitions & lineage",
+        ]
     )
-    exceptions["Status"] = np.where(exceptions["On Track"], "On track", "Management action")
-    st.dataframe(exceptions.drop(columns="On Track"), use_container_width=True, hide_index=True)
+
+    # ---------------- Performance ----------------
+    with tabs[0]:
+        left, right = st.columns((1.5, 1))
+        with left:
+            trend = _money_millions(monthly, ["revenue", "ebitda", "free_cash_flow"])
+            melted = trend.melt(
+                id_vars="month",
+                value_vars=["revenue", "ebitda", "free_cash_flow"],
+                var_name="Measure",
+                value_name="Value",
+            )
+            figure = px.line(
+                melted,
+                x="month",
+                y="Value",
+                color="Measure",
+                markers=True,
+                title="Revenue, EBITDA, and free cash flow (actual, $M)",
+            )
+            figure.update_layout(yaxis_title="$M", xaxis_title="Month", legend_title_text="")
+            st.plotly_chart(figure, width="stretch")
+        with right:
+            st.markdown("**Plan versus actual** — plan is *modelled* (Phase 3)")
+            st.caption(f"Period basis: {period.label}.")
+            plan_table = plan_vs_actual(monthly, result, period)
+            if plan_table.empty:
+                st.info(
+                    "Plan plan_table unavailable: the filtered period does not overlap "
+                    "the model's five-year horizon."
+                )
+            else:
+                st.dataframe(
+                    plan_table.style.format(
+                        {
+                            "Plan Revenue ($M)": "{:,.2f}",
+                            "Actual Revenue ($M)": "{:,.2f}",
+                            "Revenue Variance ($M)": "{:+,.2f}",
+                            "Revenue Variance %": "{:+.1%}",
+                            "Plan EBITDA ($M)": "{:,.2f}",
+                            "Actual EBITDA ($M)": "{:,.2f}",
+                            "EBITDA Variance ($M)": "{:+,.2f}",
+                            "EBITDA Variance %": "{:+.1%}",
+                        }
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
+                st.caption(
+                    "`Months Covered` shows how much of each model year the actuals "
+                    "span — a partial year is not a full-year miss. Model-year "
+                    "numbering is fixed to the anchor above and does not restart "
+                    "when the reporting period is narrowed."
+                )
+
+    # ---------------- Growth & margin ----------------
+    with tabs[1]:
+        growth = organic_growth_view(monthly)
+        left, right = st.columns(2)
+        with left:
+            if growth["revenue_yoy"].notna().any():
+                figure = px.line(
+                    growth.dropna(subset=["revenue_yoy"]),
+                    x="month",
+                    y=["revenue_yoy", "ebitda_yoy"],
+                    markers=True,
+                    title="Year-over-year growth (actual)",
+                )
+                figure.update_layout(
+                    yaxis_tickformat=".0%", yaxis_title="YoY growth", xaxis_title="Month",
+                    legend_title_text="",
+                )
+                st.plotly_chart(figure, width="stretch")
+            else:
+                st.info(
+                    "Year-over-year growth needs at least 13 months in the window; "
+                    f"this selection has {len(growth)}."
+                )
+        with right:
+            figure = px.line(
+                monthly,
+                x="month",
+                y="ebitda_margin",
+                markers=True,
+                title="EBITDA margin (actual)",
+            )
+            figure.update_layout(
+                yaxis_tickformat=".0%", yaxis_title="EBITDA margin", xaxis_title="Month"
+            )
+            st.plotly_chart(figure, width="stretch")
+
+        st.markdown("**Synergy realization** — *modelled* (Phase 3)")
+        synergies = synergy_realization_view(result)
+        st.dataframe(
+            synergies.style.format(
+                {
+                    "Platform EBITDA ($M)": "{:,.2f}",
+                    "Add-on EBITDA ($M)": "{:,.2f}",
+                    "Realized Synergies ($M)": "{:,.2f}",
+                    "Total EBITDA ($M)": "{:,.2f}",
+                    "Synergy % of EBITDA": "{:.1%}",
+                    "Add-on % of EBITDA": "{:.1%}",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    # ---------------- Service line & region ----------------
+    with tabs[2]:
+        left, right = st.columns(2)
+        with left:
+            service = dimension_rollup(filtered, "service_line")
+            figure = px.bar(
+                service.sort_values("gross_margin"),
+                x="gross_margin",
+                y="service_line",
+                orientation="h",
+                text_auto=".1%",
+                title="Gross margin by service line (actual)",
+            )
+            figure.update_layout(
+                xaxis_tickformat=".0%", xaxis_title="Gross margin", yaxis_title=""
+            )
+            st.plotly_chart(figure, width="stretch")
+        with right:
+            region = dimension_rollup(filtered, "region")
+            figure = px.scatter(
+                region,
+                x="utilization",
+                y="ebitda_margin",
+                size="revenue",
+                text="region",
+                title="Branch productivity versus EBITDA margin (actual)",
+            )
+            figure.update_traces(textposition="top center")
+            figure.update_layout(
+                xaxis_tickformat=".0%",
+                yaxis_tickformat=".0%",
+                xaxis_title="Billable utilization",
+                yaxis_title="EBITDA margin",
+            )
+            st.plotly_chart(figure, width="stretch")
+
+        st.dataframe(
+            _money_millions(region, ["revenue", "ebitda"]).style.format(
+                {
+                    "revenue": "{:,.2f}",
+                    "ebitda": "{:,.2f}",
+                    "gross_margin": "{:.1%}",
+                    "ebitda_margin": "{:.1%}",
+                    "recurring_mix": "{:.1%}",
+                    "utilization": "{:.1%}",
+                    "route_density": "{:.2f}",
+                    "revenue_share": "{:.1%}",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    # ---------------- Platform vs add-on ----------------
+    with tabs[3]:
+        if "business_unit" not in dimensions:
+            st.info(
+                "This dataset has no `business_unit` column, so platform and add-on "
+                "performance cannot be separated. Add the column to enable this view."
+            )
+        else:
+            units_table = dimension_rollup(filtered, "business_unit")
+            left, right = st.columns((1, 1.2))
+            with left:
+                figure = px.pie(
+                    units_table,
+                    names="business_unit",
+                    values="revenue",
+                    title="Revenue mix by business unit (actual)",
+                    hole=0.45,
+                )
+                st.plotly_chart(figure, width="stretch")
+            with right:
+                figure = px.bar(
+                    units_table,
+                    x="business_unit",
+                    y=["gross_margin", "ebitda_margin", "utilization"],
+                    barmode="group",
+                    title="Margin and utilization by business unit (actual)",
+                )
+                figure.update_layout(
+                    yaxis_tickformat=".0%", yaxis_title="Rate", xaxis_title="",
+                    legend_title_text="",
+                )
+                st.plotly_chart(figure, width="stretch")
+            st.dataframe(
+                _money_millions(units_table, ["revenue", "ebitda"]).style.format(
+                    {
+                        "revenue": "{:,.2f}",
+                        "ebitda": "{:,.2f}",
+                        "gross_margin": "{:.1%}",
+                        "ebitda_margin": "{:.1%}",
+                        "recurring_mix": "{:.1%}",
+                        "utilization": "{:.1%}",
+                        "route_density": "{:.2f}",
+                        "revenue_share": "{:.1%}",
+                    }
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+
+    # ---------------- Capital structure ----------------
+    with tabs[4]:
+        st.markdown(
+            "Every figure on this tab is **modelled** from the Phase 3 "
+            f"`{scenario_name}` scenario. None of it is an operating actual."
+        )
+        capital = capital_structure_view(result, SCENARIOS[scenario_name])
+        figure = go.Figure()
+        figure.add_trace(
+            go.Bar(x=capital["Model Year"], y=capital["Ending Debt ($M)"], name="Ending debt ($M)")
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=capital["Model Year"],
+                y=capital["Net Leverage (x)"],
+                name="Net leverage (x)",
+                yaxis="y2",
+                mode="lines+markers",
+            )
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=capital["Model Year"],
+                y=capital["Covenant Ceiling (x)"],
+                name="Covenant ceiling (x)",
+                yaxis="y2",
+                mode="lines",
+                line={"dash": "dot"},
+            )
+        )
+        figure.update_layout(
+            title="Modelled debt, leverage, and covenant headroom",
+            xaxis_title="Model year",
+            yaxis={"title": "Ending debt ($M)"},
+            yaxis2={"title": "Leverage (x)", "overlaying": "y", "side": "right"},
+            legend={"orientation": "h"},
+        )
+        st.plotly_chart(figure, width="stretch")
+        st.dataframe(
+            capital.style.format(
+                {
+                    "EBITDA ($M)": "{:,.2f}",
+                    "Ending Debt ($M)": "{:,.2f}",
+                    "Ending Cash ($M)": "{:,.2f}",
+                    "Gross Leverage (x)": "{:,.2f}",
+                    "Net Leverage (x)": "{:,.2f}",
+                    "Covenant Ceiling (x)": "{:,.2f}",
+                    "Headroom (turns)": "{:,.2f}",
+                    "Incremental Debt Capacity ($M)": "{:,.2f}",
+                    "Liquidity ($M)": "{:,.2f}",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    # ---------------- Exceptions ----------------
+    with tabs[5]:
+        st.subheader("Management exception report")
+        exceptions = exception_report(monthly, thresholds, window=window)
+        if exceptions.empty:
+            st.success(
+                "No exceptions: every governing KPI is at or better than target for the "
+                "selected filters and window."
+            )
+        else:
+            st.dataframe(
+                exceptions.style.format(
+                    {"Current": "{:,.4f}", "Target": "{:,.4f}", "Gap": "{:+,.4f}"}
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+            st.caption(
+                "Severity is the relative shortfall against target: High is 15% or worse. "
+                "`Unavailable` means the window has too little data to compute the metric."
+            )
+        st.download_button(
+            "Download exception actions (CSV)",
+            exceptions.to_csv(index=False).encode("utf-8"),
+            file_name="management_exceptions.csv",
+            mime="text/csv",
+        )
+
+        st.divider()
+        st.subheader("Full KPI summary")
+        st.dataframe(
+            kpi_summary(monthly, thresholds, window=window),
+            width="stretch",
+            hide_index=True,
+        )
+
+    # ---------------- Definitions ----------------
+    with tabs[6]:
+        st.subheader("Metric definitions and data lineage")
+        st.dataframe(metric_definitions_table(thresholds), width="stretch", hide_index=True)
+        st.caption(
+            "Targets are author-defined operating thresholds and are not specified in "
+            "PROJECT_BLUEPRINT.md. Governing KPIs are computed only from operating "
+            "data; plan, capital-structure, and synergy figures come from the Phase 3 "
+            "model and are labelled Modelled."
+        )
+
+    # ---------------- Downloads ----------------
+    st.divider()
+    left, right = st.columns(2)
+    with left:
+        st.download_button(
+            "Download filtered operating data (CSV)",
+            filtered.to_csv(index=False).encode("utf-8"),
+            file_name="filtered_operating_data.csv",
+            mime="text/csv",
+        )
+    with right:
+        st.download_button(
+            "Download monthly KPI table (CSV)",
+            monthly.to_csv(index=False).encode("utf-8"),
+            file_name="monthly_kpis.csv",
+            mime="text/csv",
+        )
 
 
 if __name__ == "__main__":

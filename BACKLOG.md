@@ -103,7 +103,43 @@ Acceptance criteria:
 - CSV/JSON outputs remain available; an Excel export is optional but desirable.
 
 ## Phase 4 — COO dashboard
-**Status:** NOT STARTED
+**Status:** DONE (2026-08-02)
+
+Delivered: computation split out of the UI into `operations_kpis.py`, which
+imports no UI framework and is fully unit-tested; `operations_dashboard.py` is
+now presentation only. Six governing KPIs plus DSO, each with current value,
+prior-window comparison, author-defined target, formula, and provenance.
+Seven sections: performance (with plan-versus-actual), growth and margin,
+service line and region, platform versus add-on, capital structure, exceptions,
+and a definitions/lineage table. Filters (date, region, service line, business
+unit) are applied once to the raw rows so every view derives from the same
+frame. Downloads for filtered data, monthly KPIs, and exception actions.
+Headless generation via `make operating` writes twelve CSVs.
+
+Three scaffold defects fixed:
+1. Period KPIs averaged monthly ratios, weighting a small month equally with a
+   large one. Multi-month values are now ratios of sums.
+2. Churn divided by the same-period active base; the blueprint specifies the
+   opening base. Now uses the prior month's close, and is undefined (not
+   silently substituted) for the first month in a window.
+3. The dashboard had zero test coverage. It now has 59 tests, including a
+   Streamlit `AppTest` render suite.
+
+Lineage is kept strictly separate: governing KPIs are computed only from
+operating data, while plan, capital structure, leverage headroom, liquidity,
+and synergy realization are read from the Phase 3 model through
+`buy_and_build_model` and labelled `Modelled`. No financial formula is
+reimplemented in the dashboard. Phase 3 outputs are byte-identical.
+
+New optional columns `business_unit` and `lost_recurring_revenue` unlock the
+platform-versus-add-on and gross-revenue-retention views; when absent the
+dashboard states so rather than substituting a proxy. The sample dataset is
+synthetic but calibrated so annual revenue and EBITDA reconcile to the Phase 3
+base case, which is what makes plan-versus-actual meaningful.
+
+Open follow-ups: targets are author-defined and unvalidated against real
+operating benchmarks; GRR falls back to customer churn without the optional
+column; the sample data's segment split is invented.
 
 Acceptance criteria:
 - CSV schema validation returns actionable errors.

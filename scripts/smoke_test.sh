@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py
+python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py operations_kpis.py
 python buy_and_build_model.py --output-dir outputs/model >/tmp/project-copperline-model.log
+python operations_kpis.py --output-dir outputs/operations >/tmp/project-copperline-operations.log
 pytest -q
 
 echo "Smoke test passed."
 echo "Model output: outputs/model/base/five_year_pro_forma.csv"
 echo "Scenario comparison: outputs/model/scenario_comparison.csv"
+echo "Operating KPIs: outputs/operations/kpi_summary.csv"

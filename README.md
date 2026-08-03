@@ -19,7 +19,8 @@ The strategy deliberately excludes ownership of regulated utilities, commodity-h
 
 - `sourcing_pipeline.py` — public-directory scraping, cleaning, website enrichment, deduplication, and 0-100 lead scoring.
 - `buy_and_build_model.py` — five-year platform/add-on model, debt sweep, cash conversion, and gross return outputs.
-- `operations_dashboard.py` — self-contained Streamlit/Plotly COO dashboard with deterministic sample data and CSV upload.
+- `operations_kpis.py` — UI-free operating-data validation, KPI computation, exceptions, and modelled views.
+- `operations_dashboard.py` — thin Streamlit/Plotly COO cockpit over `operations_kpis`.
 - `requirements.txt` — pinned dependency ranges.
 
 ## Installation
@@ -155,6 +156,82 @@ paid_hours, billable_hours, completed_jobs, route_miles,
 active_customers, lost_customers, recurring_revenue, capex,
 cash_taxes, cash_interest, delta_nwc, accounts_receivable
 ```
+
+Two columns are **optional** and unlock extra views when present:
+
+- `business_unit` — enables the platform-versus-add-on tab.
+- `lost_recurring_revenue` — enables gross revenue retention.
+
+When either is absent the dashboard says so explicitly rather than
+substituting a proxy. One row per `month / region / service_line`
+(plus `business_unit` when present); duplicate segments are rejected with a
+message telling you to aggregate first.
+
+### Architecture
+
+`operations_kpis.py` holds all data preparation and KPI computation and imports
+no UI framework, so every displayed number is unit-tested. `operations_dashboard.py`
+is presentation only. Financial figures are read from the Phase 3 model through
+`buy_and_build_model`; no financial formula is reimplemented in the dashboard.
+
+### Governing KPIs
+
+The six governing KPIs are route density, billable utilization, gross margin,
+recurring-revenue mix, customer churn, and FCF conversion, with DSO as a
+supporting cash metric. Two definitional points matter for review:
+
+- Multi-month values are **ratios of sums**, not averages of monthly ratios, so
+  a small branch cannot outweigh a large one.
+- Churn uses the **opening** customer base (prior month's close), per the
+  blueprint. The first month in any window is therefore undefined rather than
+  silently divided by the current-period base.
+- Customer counts are summed across segments, so a customer buying several
+  service lines — or served from several regions — is counted more than once,
+  which distorts the churn rate. De-duplicating requires a customer-level
+  identifier that this schema does not carry, so the dashboard discloses the
+  caveat rather than inventing a correction.
+
+### Model-period anchoring
+
+Calendar months are mapped to model years from a **fixed anchor** resolved once
+from the full dataset, before any filter is applied: an explicit model start
+date if supplied, otherwise the earliest month present. Every row is stamped
+with its model year up front, so narrowing the reporting period to a
+mid-horizon range keeps its true numbering — selecting July 2026 onward reports
+Model Years 3–5, not a fresh Year 1. The anchor is shown in the
+plan-versus-actual section and travels with the CSV in a `Model Anchor` column.
+Set it with `--model-start` on the CLI or the "Model Year 1 begins" control in
+the sidebar; unparseable dates are rejected with an actionable error.
+
+### Actual versus modelled
+
+Governing KPIs are computed **only** from operating data. Plan-versus-actual,
+capital structure, leverage headroom, liquidity, and synergy realization are
+**modelled** from the selected Phase 3 scenario and are labelled as such
+throughout. Targets are author-defined operating thresholds and are not
+specified in `PROJECT_BLUEPRINT.md`.
+
+### Headless generation
+
+```bash
+python operations_kpis.py --output-dir outputs/operations
+python operations_kpis.py --scenario downside --input my_actuals.csv
+```
+
+Writes `operating_data.csv`, `monthly_kpis.csv`, `kpi_summary.csv`,
+`exceptions.csv`, `metric_definitions.csv`, `organic_growth.csv`,
+`plan_vs_actual.csv`, `capital_structure.csv`, `synergy_realization.csv`, and a
+`performance_by_*.csv` per available dimension.
+
+### Sample data
+
+The sample dataset is entirely synthetic. Its **annual revenue and EBITDA are
+calibrated to the Phase 3 base case** so plan-versus-actual compares like with
+like; the region / service-line / business-unit split within a year is invented
+and makes no claim about any real business. Business units follow the model's
+acquisition schedule, and one branch (Mountain West) is deliberately generated
+as an underperformer so the management-exception workflow is demonstrable when
+filtering to it.
 
 ## 4. Recommended candidate presentation
 
