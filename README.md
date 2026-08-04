@@ -35,6 +35,101 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+---
+
+# Quick start: build the whole deliverable
+
+From a clean checkout, three commands produce the complete candidate package.
+Everything runs **offline** — no network access is required or attempted.
+
+```bash
+python3.11 -m venv .venv                      # Python 3.11+ required
+source .venv/bin/activate                     # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt           # dev extras include the test tooling
+make package                                  # ~15 seconds
+```
+
+Then read `outputs/candidate_package/IC_SUMMARY.md` and follow
+`outputs/candidate_package/DEMO_WALKTHROUGH.md` for the five-minute demo.
+
+| Command | Produces |
+|---|---|
+| `make package` | The full integrated deliverable in `outputs/candidate_package/` |
+| `make verify` | Re-checksums every artifact against `MANIFEST.json` |
+| `make dashboard` | Launches the live COO dashboard |
+| `make smoke` | Regenerates everything, verifies checksums, runs the test suite |
+| `make model` / `make operating` / `make sourcing` | Individual components, unchanged |
+
+### What the package contains
+
+```
+outputs/candidate_package/
+├── IC_SUMMARY.md              investment committee summary
+├── DEMO_WALKTHROUGH.md        five-minute demo script
+├── MANIFEST.json              every artifact with a SHA-256 checksum
+├── 01_sourcing/               target universe, top 15, selected candidate,
+│                              tie disclosure, funnel
+├── 02_model/                  base / downside / upside: pro forma, sources and
+│                              uses, return bridge, sensitivities
+├── 03_operating/              dashboard input data and generated KPI views
+└── 04_reference/              assumptions with provenance, KPI definitions,
+                               known limitations
+```
+
+### Reproducibility
+
+Every artifact is byte-identical across runs from a clean output directory. The
+only volatile value is the run date, isolated in the manifest's `as_of` block
+and pinnable:
+
+```bash
+python candidate_package.py --output-dir outputs/candidate_package --as-of 2026-01-31
+python candidate_package.py --verify outputs/candidate_package/MANIFEST.json
+```
+
+Generated artifacts are **not** committed; `outputs/` is gitignored.
+
+### Architecture map
+
+```
+sourcing_fixtures.py ─┐
+                      ├─> sourcing_pipeline.py ──┐   scoring, dedupe, evidence
+                      ┘                          │
+buy_and_build_model.py ──────────────────────────┤   scenarios, returns, bridge
+                                                 ├─> candidate_package.py ─> outputs/
+operations_kpis.py ──────────────────────────────┤   KPIs, exceptions, lineage
+        └─> operations_dashboard.py (Streamlit) ─┘   presentation only
+```
+
+`candidate_package.py` is orchestration only. It reimplements no scoring rule,
+financial formula, or KPI definition — each stays owned by its module.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `ModuleNotFoundError: streamlit` (or pandas, plotly) | Dependencies not installed. Run `pip install -r requirements-dev.txt` inside the activated venv. |
+| Wheel build errors on install | The venv is on Python 3.10 or older. Recreate it with an explicit `python3.11 -m venv .venv`; numpy 2.x / pandas 2.x have no wheels for older versions. |
+| `make: command not found` | Run the underlying command directly: `python candidate_package.py --output-dir outputs/candidate_package`. |
+| `error: Operating data is missing required column(s): …` | An uploaded CSV lacks required columns. The message names them; see the schema in section 3. |
+| `… duplicate row(s) share the same month/region/service_line` | The upload has more than one row per segment per month. Aggregate to that grain first. |
+| `Verification FAILED — CHECKSUM MISMATCH` | An artifact changed after generation. Rebuild with `make package`, then `make verify`. |
+| `Verification FAILED — UNLISTED FILE` | A file was added to the package directory after the build. Remove it or rebuild. |
+| `error: Invalid --as-of value` | Use an ISO date, e.g. `--as-of 2026-01-31`. |
+| `Refusing to build into …: it looks like a repository root` | `--output-dir` points at a directory containing `.git`. Choose a path under `outputs/`. |
+| Dashboard shows "No rows match the selected filters" | The filter combination is empty. Widen the date range or reselect regions. |
+
+### Verify the installation
+
+```bash
+make smoke
+```
+
+Regenerates the model, operating, and candidate-package outputs, verifies every
+checksum, and runs the full test suite.
+
+---
+
 ## 1. Build the target database
 
 ```bash

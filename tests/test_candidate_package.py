@@ -1,0 +1,636 @@
+"""Tests for the Phase 5 integrated candidate deliverable.
+
+These assert the properties a reviewer depends on: that the package builds from
+nothing, that every artifact is described and checksummed, that reruns are
+byte-identical, that the narrative reconciles to the generated model outputs,
+and that Phase 3 and Phase 4 results are unchanged by the integration.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+
+import pandas as pd
+import pytest
+
+from buy_and_build_model import SCENARIOS, build_model, run_scenario
+from candidate_package import (
+    MANIFEST_NAME,
+    PROVENANCE,
+    SCENARIO_ORDER,
+    Artifact,
+    PackageError,
+    build_package,
+    main,
+    order_targets,
+    select_candidate,
+    verify_package,
+)
+from operations_kpis import (
+    Thresholds,
+    generate_sample_data,
+    kpi_summary,
+    monthly_rollup,
+    validate_operating_data,
+)
+
+AS_OF = "2026-01-31"
+
+
+@pytest.fixture(scope="module")
+def package(tmp_path_factory):
+    """One clean build, reused across assertions."""
+    target = tmp_path_factory.mktemp("package")
+    return build_package(target, as_of=AS_OF)
+
+
+@pytest.fixture(scope="module")
+def manifest(package) -> dict:
+    return json.loads(package.manifest_path.read_text(encoding="utf-8"))
+
+
+@pytest.fixture(scope="module")
+def ic_summary(package) -> str:
+    return (package.output_dir / "IC_SUMMARY.md").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Clean build.
+# ---------------------------------------------------------------------------
+
+
+def test_clean_build_produces_a_complete_package(package) -> None:
+    assert package.manifest_path.exists()
+    assert (package.output_dir / "IC_SUMMARY.md").exists()
+    assert (package.output_dir / "DEMO_WALKTHROUGH.md").exists()
+    for directory in ("01_sourcing", "02_model", "03_operating", "04_reference"):
+        assert (package.output_dir / directory).is_dir(), directory
+    assert len(package.artifacts) >= 40
+
+
+def test_build_creates_missing_output_directories(tmp_path) -> None:
+    nested = tmp_path / "does" / "not" / "exist" / "yet"
+    assert not nested.exists()
+    result = build_package(nested, as_of=AS_OF)
+    assert result.manifest_path.exists()
+
+
+def test_build_does_not_depend_on_pre_existing_outputs(tmp_path) -> None:
+    """A stale artifact from a previous run must not survive or be reused."""
+    first = build_package(tmp_path / "pkg", as_of=AS_OF)
+    stale = first.output_dir / "02_model" / "base" / "five_year_pro_forma.csv"
+    stale.write_text("corrupted,garbage\n1,2\n", encoding="utf-8")
+    orphan = first.output_dir / "01_sourcing" / "orphan_from_old_run.csv"
+    orphan.write_text("stale\n", encoding="utf-8")
+
+    second = build_package(tmp_path / "pkg", as_of=AS_OF)
+
+    assert not orphan.exists(), "stale artifact survived a rebuild"
+    assert "corrupted" not in stale.read_text(encoding="utf-8")
+    assert not verify_package(second.manifest_path)
+
+
+def test_build_works_in_a_path_containing_spaces(tmp_path) -> None:
+    spaced = tmp_path / "candidate package with spaces"
+    result = build_package(spaced, as_of=AS_OF)
+    assert not verify_package(result.manifest_path)
+    assert " " in str(result.output_dir)
+
+
+def test_build_refuses_to_write_into_a_repository_root(tmp_path) -> None:
+    (tmp_path / ".git").mkdir()
+    with pytest.raises(PackageError, match="repository root"):
+        build_package(tmp_path, as_of=AS_OF)
+
+
+def test_invalid_as_of_fails_cleanly(tmp_path) -> None:
+    with pytest.raises(PackageError, match="Invalid --as-of"):
+        build_package(tmp_path / "pkg", as_of="not-a-date")
+
+
+# ---------------------------------------------------------------------------
+# Manifest and checksums.
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_lists_every_generated_file(package, manifest) -> None:
+    on_disk = {
+        str(p.relative_to(package.output_dir)).replace("\\", "/")
+        for p in package.output_dir.rglob("*")
+        if p.is_file() and p.name != MANIFEST_NAME
+    }
+    listed = {entry["path"] for entry in manifest["artifacts"]}
+    assert listed == on_disk
+    assert manifest["artifact_count"] == len(on_disk)
+
+
+def test_every_artifact_carries_provenance_and_a_description(manifest) -> None:
+    valid = set(PROVENANCE.values())
+    for entry in manifest["artifacts"]:
+        assert entry["provenance"] in valid, entry["path"]
+        assert len(entry["description"]) > 10, entry["path"]
+        assert entry["bytes"] > 0, entry["path"]
+        assert re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]), entry["path"]
+
+
+def test_checksums_verify_against_the_written_files(package) -> None:
+    assert verify_package(package.manifest_path) == []
+
+
+def test_verification_detects_a_tampered_artifact(tmp_path) -> None:
+    result = build_package(tmp_path / "pkg", as_of=AS_OF)
+    victim = result.output_dir / "02_model" / "scenario_comparison.csv"
+    victim.write_text(victim.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
+
+    problems = verify_package(result.manifest_path)
+    assert any("CHECKSUM MISMATCH" in p and "scenario_comparison" in p for p in problems)
+
+
+def test_verification_detects_a_missing_artifact(tmp_path) -> None:
+    result = build_package(tmp_path / "pkg", as_of=AS_OF)
+    (result.output_dir / "01_sourcing" / "funnel_summary.csv").unlink()
+
+    problems = verify_package(result.manifest_path)
+    assert any("MISSING" in p and "funnel_summary" in p for p in problems)
+
+
+def test_verification_detects_an_unlisted_file(tmp_path) -> None:
+    result = build_package(tmp_path / "pkg", as_of=AS_OF)
+    (result.output_dir / "04_reference" / "sneaked_in.csv").write_text("x\n", encoding="utf-8")
+
+    problems = verify_package(result.manifest_path)
+    assert any("UNLISTED FILE" in p for p in problems)
+
+
+def test_verify_reports_a_missing_manifest_cleanly(tmp_path) -> None:
+    with pytest.raises(PackageError, match="Manifest not found"):
+        verify_package(tmp_path / "nope" / MANIFEST_NAME)
+
+
+def test_verify_reports_malformed_manifest_cleanly(tmp_path) -> None:
+    bad = tmp_path / MANIFEST_NAME
+    bad.write_text("{not json", encoding="utf-8")
+    with pytest.raises(PackageError, match="not valid JSON"):
+        verify_package(bad)
+
+
+def test_manifest_isolates_the_only_volatile_field(manifest) -> None:
+    assert manifest["determinism"]["artifacts_are_byte_identical_across_runs"] is True
+    assert manifest["determinism"]["volatile_fields"] == ["as_of.date"]
+    assert manifest["as_of"]["date"] == AS_OF
+    assert manifest["as_of"]["is_volatile"] is True
+
+
+# ---------------------------------------------------------------------------
+# Determinism.
+# ---------------------------------------------------------------------------
+
+
+def test_two_clean_builds_are_byte_identical(tmp_path) -> None:
+    first = build_package(tmp_path / "a", as_of=AS_OF)
+    second = build_package(tmp_path / "b", as_of=AS_OF)
+
+    first_files = sorted(
+        p.relative_to(first.output_dir) for p in first.output_dir.rglob("*") if p.is_file()
+    )
+    second_files = sorted(
+        p.relative_to(second.output_dir) for p in second.output_dir.rglob("*") if p.is_file()
+    )
+    assert first_files == second_files
+
+    for relative in first_files:
+        assert (first.output_dir / relative).read_bytes() == (
+            second.output_dir / relative
+        ).read_bytes(), relative
+
+
+def test_target_ordering_is_total_and_stable() -> None:
+    """The pipeline's own sort leaves score ties unordered; ours must not."""
+    frame = pd.DataFrame(
+        {
+            "priority_score": [100.0, 100.0, 100.0, 90.0],
+            "data_confidence": [100, 100, 100, 100],
+            "company_name": ["Charlie", "Alpha", "Bravo", "Delta"],
+        }
+    )
+    ordered = order_targets(frame)
+    assert list(ordered["company_name"]) == ["Alpha", "Bravo", "Charlie", "Delta"]
+    # Shuffling the input cannot change the output.
+    reshuffled = order_targets(frame.iloc[::-1].reset_index(drop=True))
+    pd.testing.assert_frame_equal(ordered, reshuffled)
+
+
+# ---------------------------------------------------------------------------
+# Candidate selection and identity consistency.
+# ---------------------------------------------------------------------------
+
+
+def test_selection_discloses_the_tie_rather_than_choosing_silently(package) -> None:
+    selection = package.selection
+    assert selection.is_ambiguous, "fixture set ties at the top score"
+    assert len(selection.tied) > 1
+    assert "did not select a candidate" in selection.rationale
+    assert "no investment meaning" in selection.rationale
+
+
+def test_selection_prefers_the_blueprint_anchor_band() -> None:
+    targets = pd.DataFrame(
+        {
+            "priority_score": [100.0, 100.0],
+            "data_confidence": [100, 100],
+            "company_name": ["Aardvark Too Small", "Zebra In Band"],
+            "technician_count_est": [3.0, 25.0],
+        }
+    )
+    selection = select_candidate(targets)
+    # Alphabetically first, but outside the band, so the band wins.
+    assert selection.name == "Zebra In Band"
+    assert selection.is_ambiguous
+
+
+def test_selection_is_unambiguous_when_one_candidate_leads() -> None:
+    targets = pd.DataFrame(
+        {
+            "priority_score": [100.0, 90.0],
+            "data_confidence": [100, 100],
+            "company_name": ["Leader", "Runner Up"],
+            "technician_count_est": [20.0, 20.0],
+        }
+    )
+    selection = select_candidate(targets)
+    assert not selection.is_ambiguous
+    assert "no tiebreak was required" in selection.rationale
+
+
+def test_empty_universe_fails_cleanly() -> None:
+    with pytest.raises(PackageError, match="target universe is empty"):
+        select_candidate(pd.DataFrame())
+
+
+def test_candidate_identity_is_consistent_across_every_artifact(package, manifest, ic_summary) -> None:
+    """The same company must appear in sourcing, manifest, and the summary."""
+    name = package.selection.name
+    out = package.output_dir
+
+    selected = pd.read_csv(out / "01_sourcing" / "selected_candidate.csv")
+    assert len(selected) == 1
+    assert selected.iloc[0]["company_name"] == name
+
+    universe = pd.read_csv(out / "01_sourcing" / "target_universe.csv")
+    assert name in set(universe["company_name"])
+
+    top15 = pd.read_csv(out / "01_sourcing" / "top_15_targets.csv")
+    assert name in set(top15["company_name"])
+
+    tied = pd.read_csv(out / "01_sourcing" / "selection_tie_disclosure.csv")
+    assert name in set(tied["company_name"])
+
+    assert manifest["candidate"]["selected"] == name
+    assert manifest["candidate"]["tied_at_top_score"] == len(tied)
+    assert f"**Selected candidate: {name}**" in ic_summary
+
+
+def test_selected_candidate_is_the_top_of_the_packaged_universe(package) -> None:
+    universe = pd.read_csv(package.output_dir / "01_sourcing" / "target_universe.csv")
+    top_score = universe["priority_score"].max()
+    selected = pd.read_csv(package.output_dir / "01_sourcing" / "selected_candidate.csv")
+    assert float(selected.iloc[0]["priority_score"]) == pytest.approx(top_score)
+
+
+def test_funnel_stages_reconcile_to_the_universe(package) -> None:
+    """A funnel a reviewer reads must add up."""
+    funnel = pd.read_csv(package.output_dir / "01_sourcing" / "funnel_summary.csv")
+    universe = pd.read_csv(package.output_dir / "01_sourcing" / "target_universe.csv")
+    counts = dict(zip(funnel["Stage"], funnel["Count"], strict=True))
+
+    assert counts["Unique companies after deduplication"] == len(universe)
+    assert counts["Directory records collected"] == int(
+        universe["duplicate_count"].fillna(1).sum()
+    )
+    assert counts["Directory records collected"] >= counts["Unique companies after deduplication"]
+    # Clean enrichment plus limited-evidence records must equal the scored total,
+    # so blocked and errored fetches are visible rather than folded into "success".
+    assert (
+        counts["Enriched without error"] + counts["Scored on limited evidence"]
+        == counts["Total scored"]
+    )
+    assert counts["Enriched without error"] == int((universe["website_status"] == "ok").sum())
+    assert counts["Selected anchor candidate"] == 1
+    assert counts["Tied at maximum score"] == len(package.selection.tied)
+
+
+def test_selected_candidate_rests_on_full_evidence(package) -> None:
+    """Selecting a robots-blocked or errored record would be indefensible."""
+    selected = pd.read_csv(package.output_dir / "01_sourcing" / "selected_candidate.csv").iloc[0]
+    assert selected["website_status"] == "ok"
+    assert pd.isna(selected["enrichment_error"])
+    assert float(selected["data_confidence"]) >= 80
+
+
+def test_tie_disclosure_shows_the_discriminating_flag(package) -> None:
+    tied = pd.read_csv(package.output_dir / "01_sourcing" / "selection_tie_disclosure.csv")
+    assert "in_anchor_band" in tied.columns
+    assert tied["priority_score"].nunique() == 1, "ties must share one score"
+    assert bool(tied.iloc[0]["in_anchor_band"]), "the selected row must lead the ranking"
+
+
+def test_packaged_universe_excludes_the_volatile_timestamp(package) -> None:
+    universe = pd.read_csv(package.output_dir / "01_sourcing" / "target_universe.csv")
+    assert "scraped_at_utc" not in universe.columns
+    # Provenance columns that are NOT volatile must survive.
+    for column in ("company_url", "evidence_summary", "data_confidence", "merge_reason"):
+        assert column in universe.columns, column
+
+
+# ---------------------------------------------------------------------------
+# IC summary reconciliation.
+# ---------------------------------------------------------------------------
+
+
+def test_summary_returns_reconcile_to_the_model(package, ic_summary) -> None:
+    for name in SCENARIO_ORDER:
+        returns = package.results[name].returns
+        row = (
+            f"| {name} | {returns['gross_moic']:.2f}x | {returns['gross_irr']:.1%} | "
+            f"${returns['terminal_equity_value']:,.2f}M | "
+            f"${returns['terminal_debt']:,.2f}M | "
+            f"{returns['peak_gross_leverage']:.2f}x |"
+        )
+        assert row in ic_summary, f"{name} row missing or not reconciling"
+
+
+def test_summary_transaction_values_reconcile_to_the_model(package, ic_summary) -> None:
+    returns = package.results["base"].returns
+    for value in (
+        returns["platform_enterprise_value"],
+        returns["initial_debt"],
+        returns["initial_sponsor_equity"],
+        returns["total_sponsor_equity_invested"],
+    ):
+        assert f"${value:,.2f}M" in ic_summary
+
+
+def test_summary_matches_the_generated_scenario_comparison(package, ic_summary) -> None:
+    comparison = pd.read_csv(package.output_dir / "02_model" / "scenario_comparison.csv")
+    for _, row in comparison.iterrows():
+        assert f"| {row['Scenario']} | {row['Gross MOIC']:.2f}x |" in ic_summary
+
+
+def test_summary_leverage_reconciles_to_the_schedule(package, ic_summary) -> None:
+    schedule = package.results["base"].schedule
+    peak = float(schedule["Gross Leverage"].max())
+    exit_net = float(schedule.iloc[-1]["Net Leverage"])
+    assert f"peaks at {peak:.2f}x" in ic_summary
+    assert f"{exit_net:.2f}x net by Year 5" in ic_summary
+
+
+def test_summary_bridge_matches_the_generated_bridge(package, ic_summary) -> None:
+    bridge = pd.read_csv(package.output_dir / "02_model" / "base" / "return_bridge.csv")
+    for _, row in bridge.iterrows():
+        assert f"| {row['Component']} | {row['Value']:,.2f} |" in ic_summary
+
+
+def test_summary_labels_all_three_scenarios(ic_summary) -> None:
+    assert "## 5. Returns" in ic_summary
+    for name in SCENARIO_ORDER:
+        assert f"| {name} |" in ic_summary
+    assert "3% organic growth, half synergy capture" in ic_summary
+
+
+def test_summary_does_not_overstate_the_downside(ic_summary) -> None:
+    assert "should not be read as a floor" in ic_summary
+    assert "stresses only four" in ic_summary
+    assert "sensitivity, not a stress test" in ic_summary
+
+
+def test_summary_discloses_synthetic_and_fixture_data(ic_summary) -> None:
+    assert "synthetic fixture company" in ic_summary
+    assert "generated, not observed" in ic_summary
+    assert "not evidence about any real business" in ic_summary
+    assert "`synthetic`" in ic_summary
+    assert "`fixture`" in ic_summary
+
+
+def test_summary_states_targets_are_not_benchmarked(ic_summary) -> None:
+    assert "not externally benchmarked" in ic_summary
+
+
+def test_summary_states_the_model_is_not_derived_from_the_candidate(ic_summary) -> None:
+    assert "financial\n> model is not derived from it" in ic_summary
+    assert "no revenue or EBITDA" in ic_summary
+
+
+def test_summary_covers_every_required_section(ic_summary) -> None:
+    for heading in (
+        "## 1. Transaction overview",
+        "## 2. Investment thesis",
+        "## 3. Target funnel and selected candidate",
+        "## 4. Operating case",
+        "## 5. Returns",
+        "## 6. Value-creation bridge",
+        "## 7. Leverage and liquidity",
+        "## 8. Downside",
+        "## 9. Material risks",
+        "## 10. Next diligence steps",
+        "## 11. First 100 days",
+        "## 12. Limitations",
+    ):
+        assert heading in ic_summary, heading
+
+
+def test_operating_kpis_in_summary_match_the_generated_table(package, ic_summary) -> None:
+    summary_table = pd.read_csv(package.output_dir / "03_operating" / "kpi_summary.csv")
+    for _, row in summary_table.iterrows():
+        assert str(row["Metric"]) in ic_summary
+
+
+# ---------------------------------------------------------------------------
+# Reference material and demo.
+# ---------------------------------------------------------------------------
+
+
+def test_limitations_document_discloses_known_gaps(package) -> None:
+    text = (package.output_dir / "04_reference" / "limitations.md").read_text(encoding="utf-8")
+    for phrase in (
+        "fixture, not a real company",
+        "Operating data is synthetic",
+        "not derived from the candidate",
+        "downside case is not severe",
+        "Sensitivity grids are centred on the base case",
+        "Negative organic growth cannot be modelled",
+        "not externally benchmarked",
+        "overlapping customers",
+    ):
+        assert phrase in text, phrase
+
+
+def test_assumption_table_labels_every_source(package) -> None:
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumptions_and_provenance.csv")
+    assert len(table) >= 15
+    assert set(table["Provenance"]) <= {PROVENANCE["blueprint"], PROVENANCE["author"]}
+    governor = table[table["Assumption"].str.contains("Max pro-forma leverage")]
+    assert governor.iloc[0]["Provenance"] == PROVENANCE["author"]
+
+
+def test_demo_walkthrough_covers_the_required_path(package) -> None:
+    text = (package.output_dir / "DEMO_WALKTHROUGH.md").read_text(encoding="utf-8")
+    assert "Sourcing funnel" in text
+    assert "Underwriting" in text
+    assert "Operating control" in text
+    assert "Exception to operating action" in text
+    assert package.selection.name in text
+    assert "synthetic" in text
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 and Phase 4 regression.
+# ---------------------------------------------------------------------------
+
+
+def test_phase3_golden_economics_are_unchanged(package) -> None:
+    """Integration must not perturb the documented base case."""
+    returns = build_model().returns
+    assert returns["gross_moic"] == pytest.approx(4.5388573508, rel=1e-8)
+    assert returns["gross_irr"] == pytest.approx(0.3532851206, rel=1e-8)
+    assert returns["terminal_debt"] == pytest.approx(1.5602039747, rel=1e-8)
+
+    packaged = json.loads(
+        (package.output_dir / "02_model" / "base" / "return_summary.json").read_text()
+    )
+    assert packaged["gross_moic"] == pytest.approx(returns["gross_moic"], rel=1e-12)
+    assert packaged["gross_irr"] == pytest.approx(returns["gross_irr"], rel=1e-12)
+
+
+def test_packaged_model_matches_a_direct_scenario_run(package) -> None:
+    for name in SCENARIO_ORDER:
+        direct = run_scenario(SCENARIOS[name]).returns
+        packaged = json.loads(
+            (package.output_dir / "02_model" / name / "return_summary.json").read_text()
+        )
+        for key in ("gross_moic", "gross_irr", "terminal_debt", "peak_gross_leverage"):
+            assert packaged[key] == pytest.approx(direct[key], rel=1e-12), f"{name}.{key}"
+
+
+def test_phase4_default_kpis_are_unchanged(package) -> None:
+    """The package must reproduce Phase 4's default KPI results exactly."""
+    direct = kpi_summary(monthly_rollup(validate_operating_data(generate_sample_data())), Thresholds())
+    packaged = pd.read_csv(package.output_dir / "03_operating" / "kpi_summary.csv")
+
+    assert list(packaged["Metric"]) == list(direct["Metric"])
+    for column in ("Current", "Prior", "Target"):
+        assert packaged[column].tolist() == pytest.approx(direct[column].tolist(), rel=1e-12)
+    assert list(packaged["Status"]) == list(direct["Status"])
+
+
+def test_packaged_operating_data_matches_the_generator(package) -> None:
+    packaged = pd.read_csv(package.output_dir / "03_operating" / "operating_data.csv")
+    direct = validate_operating_data(generate_sample_data())
+    assert len(packaged) == len(direct)
+    assert packaged["revenue"].sum() == pytest.approx(direct["revenue"].sum(), rel=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# CLI.
+# ---------------------------------------------------------------------------
+
+
+def test_cli_builds_and_then_verifies(tmp_path, capsys) -> None:
+    out = tmp_path / "cli_pkg"
+    main(["--output-dir", str(out), "--as-of", AS_OF])
+    built = capsys.readouterr().out
+    assert "Integrated candidate package written" in built
+    assert "AMBIGUOUS" in built
+
+    main(["--verify", str(out / MANIFEST_NAME)])
+    verified = capsys.readouterr().out
+    assert "Verification passed" in verified
+
+
+def test_cli_verify_exits_nonzero_on_tampering(tmp_path, capsys) -> None:
+    out = tmp_path / "cli_pkg"
+    main(["--output-dir", str(out), "--as-of", AS_OF])
+    capsys.readouterr()
+
+    victim = out / "IC_SUMMARY.md"
+    victim.write_text(victim.read_text(encoding="utf-8") + "\ntampered\n", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(["--verify", str(out / MANIFEST_NAME)])
+    assert exit_info.value.code == 1
+    assert "Verification FAILED" in capsys.readouterr().out
+
+
+def test_cli_rejects_a_bad_as_of(tmp_path) -> None:
+    with pytest.raises(SystemExit, match="Invalid --as-of"):
+        main(["--output-dir", str(tmp_path / "pkg"), "--as-of", "13/13/2026"])
+
+
+def test_artifact_serializes_completely() -> None:
+    artifact = Artifact(
+        path="a/b.csv", sha256="0" * 64, bytes=10, kind="model", provenance="x", description="y"
+    )
+    assert set(artifact.to_dict()) == {
+        "path",
+        "sha256",
+        "bytes",
+        "kind",
+        "provenance",
+        "description",
+    }
+
+
+def test_missing_expected_artifact_is_detected_at_build_time(tmp_path, monkeypatch) -> None:
+    """If a writer silently stops emitting a file, the build must fail."""
+    import candidate_package as cp
+
+    real_write = cp.write_operating_outputs
+
+    def partial_write(frame, output_dir, **kwargs):
+        written = real_write(frame, output_dir, **kwargs)
+        (output_dir / "exceptions.csv").unlink()
+        return written
+
+    monkeypatch.setattr(cp, "write_operating_outputs", partial_write)
+    with pytest.raises(PackageError, match="were not generated"):
+        build_package(tmp_path / "pkg", as_of=AS_OF)
+
+
+def test_undescribed_artifact_is_detected_at_build_time(tmp_path, monkeypatch) -> None:
+    """A new output with no manifest description must not slip through."""
+    import candidate_package as cp
+
+    real_write = cp.write_operating_outputs
+
+    def extra_write(frame, output_dir, **kwargs):
+        written = real_write(frame, output_dir, **kwargs)
+        (output_dir / "undocumented_extra.csv").write_text("x\n", encoding="utf-8")
+        return written
+
+    monkeypatch.setattr(cp, "write_operating_outputs", extra_write)
+    with pytest.raises(PackageError, match="missing a manifest description"):
+        build_package(tmp_path / "pkg", as_of=AS_OF)
+
+
+def test_corrupt_fixture_source_fails_cleanly(tmp_path, monkeypatch) -> None:
+    import candidate_package as cp
+
+    monkeypatch.setattr(cp, "build_offline_dataset", lambda: ([], {}, set(), set()))
+    with pytest.raises(PackageError, match="produced no records"):
+        build_package(tmp_path / "pkg", as_of=AS_OF)
+
+
+def test_shutil_is_not_used_to_remove_unmanaged_content(tmp_path) -> None:
+    """Rebuilds must not delete files the package did not create."""
+    out = tmp_path / "pkg"
+    build_package(out, as_of=AS_OF)
+    bystander = out / "reviewer_notes.txt"
+    bystander.write_text("keep me\n", encoding="utf-8")
+
+    build_package(out, as_of=AS_OF)
+    assert bystander.exists(), "rebuild deleted a file it did not create"
+    assert bystander.read_text(encoding="utf-8") == "keep me\n"
+    # ...but it is then reported as unlisted, not silently included.
+    assert any("UNLISTED FILE" in p for p in verify_package(out / MANIFEST_NAME))
+    shutil.rmtree(out)

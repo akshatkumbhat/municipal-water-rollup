@@ -150,7 +150,47 @@ Acceptance criteria:
 - Dashboard launches successfully and receives a manual visual review.
 
 ## Phase 5 — Integrated candidate deliverable
-**Status:** NOT STARTED
+**Status:** DONE (2026-08-03)
+
+Delivered: `candidate_package.py` orchestrates the existing sourcing, scoring,
+model, and KPI modules into one reviewable package via `make package`. It
+reimplements no formula — every number is produced by the module that owns it.
+Output is a four-directory tree plus `IC_SUMMARY.md`, `DEMO_WALKTHROUGH.md`,
+and a `MANIFEST.json` carrying a SHA-256 checksum, provenance tag, and
+description for all 44 artifacts. `make verify` re-checksums the package.
+
+The IC summary is generated from the model results, so narrative and CSVs
+cannot drift: returns, sources and uses, the bridge, and leverage are asserted
+to reconcile in tests. It separates blueprint, modelled, fixture, synthetic,
+and author-defined values with an explicit legend, states that the candidate is
+a synthetic fixture and the model is not derived from it, declines to present
+the downside as a floor, and records that dashboard targets are not externally
+benchmarked.
+
+Two determinism defects were found in the Phase 2 sourcing output and handled
+in the new orchestration layer without changing Phase 2:
+1. `sourcing_pipeline.py:726` sorts by score and confidence only. Five fixture
+   companies tie at exactly (100.0, 100), so their order fell out of
+   thread-pool completion order and changed between runs. `order_targets()`
+   appends company name for a total order.
+2. `sourcing_pipeline.py:931` stamps a wall-clock `scraped_at_utc` on every
+   row. It is excluded from the package; the run date is isolated in the
+   manifest's `as_of` block and pinnable with `--as-of`.
+
+Candidate selection is ambiguous in the fixture set — five candidates tie at
+100. The package does not choose silently: it applies a documented tiebreak
+(anchor technician band, then confidence, then name), writes every tied
+candidate to `selection_tie_disclosure.csv`, flags the ambiguity in the
+manifest, and states in the summary that the final alphabetical tiebreak
+carries no investment meaning.
+
+README gains a quick start, architecture map, package layout, reproducibility
+notes, and a troubleshooting table. Phase 3 golden outputs and Phase 4 default
+KPI results are unchanged and asserted in tests. Suite grows 188 -> 242.
+
+Open follow-ups: the packaged demo remains built on fixture and synthetic data
+by design; `04_reference/limitations.md` carries the full disclosure list,
+including the six pre-existing backlog items which were not addressed here.
 
 Acceptance criteria:
 - One command generates model outputs and sample dashboard data.
