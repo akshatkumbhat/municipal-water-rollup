@@ -220,8 +220,9 @@ the blueprint does not specify an upside.
 
 Custom scenarios need no code change. A `--scenario-file` entry supplies
 overrides only; omitted keys keep their base value, and unknown keys raise.
-A working example ships in `examples/scenarios.json` with three author-defined
-cases — a revenue-decline case, a no-add-on credit stress, and one that lets a
+A working example ships in `examples/scenarios.json` with five author-defined
+cases: a **severe downside** stress case, an isolated **integration-failure**
+case, a revenue-decline case, a no-add-on credit stress, and one that lets a
 lender credit the full synergy add-back:
 
 ```bash
@@ -238,6 +239,45 @@ python buy_and_build_model.py --scenario-file examples/scenarios.json
 Organic growth may be **negative** — a shrinking business is a valid case to
 underwrite. The bound is the revenue multiplier `(1 + growth)`, which must stay
 positive, so growth is accepted on `-1 < growth < 1`.
+
+#### Severe downside
+
+The blueprint's `downside` scenario varies only growth, synergy capture,
+interest, and the exit mark, and still returns 3.58x, so it explores a narrow
+band of outcomes. `examples/scenarios.json` adds a **severe downside** that also
+moves the **entry multiple** (overpay at 7.0x), **platform margin** (20% to
+16.5% with no expansion), and **add-on integration** (one tuck-in underperforms,
+one is late and smaller, one never closes), alongside a 3% annual revenue
+decline, 10.5% interest, and a 5.0x exit. It returns **0.99x MOIC / -0.2%
+IRR** — a modeled capital-impairment case in which the sponsor does not recover
+its investment. Debt still amortises throughout, so it models value destruction
+rather than a liquidity failure.
+
+This is a severe downside, **not a guaranteed lower bound**. Worse outcomes are
+possible: a covenant default, an unrecovered receivable position, a failed
+platform, or several stresses landing harder than modelled here. It is one
+plausible loss case, chosen to be internally coherent.
+
+The `integration-failure` case isolates the tuck-in driver alone (3.69x), which
+the blueprint downside cannot express at all because it never varies the
+acquisition schedule.
+
+One modelling note worth stating, because it is counterintuitive **and specific
+to this model's construction**: reducing `platform_revenue` is not a downside
+stress here. Under the current assumptions the add-on programme is a fixed
+absolute size and the entry multiple is unchanged, so a smaller platform needs
+proportionally less equity while the lower-multiple add-ons contribute a larger
+share of the deal, and modeled MOIC rises. That is an artefact of holding
+add-on size and entry pricing constant — **it is not a general conclusion that
+smaller platforms earn better returns.** Concentration loss must therefore be
+modelled as post-close revenue decline — you paid for EBITDA that then went
+away — which is how the severe case expresses it.
+
+Single-driver figures quoted anywhere in this repository are
+**one-factor-at-a-time** sensitivities, each measured against the base case with
+every other assumption held constant. They are **not additive** and do not sum
+to the combined severe-downside result, which reflects interaction between the
+stresses.
 
 ### Modeling conventions
 

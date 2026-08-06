@@ -8,9 +8,72 @@
     "'add_ons' is optional; omit it to keep the blueprint add-on schedule, or",
     "supply [] to model the platform with no tuck-ins.",
     "",
-    "These cases are author-defined illustrations, not blueprint scenarios."
+    "These cases are author-defined illustrations, not blueprint scenarios.",
+    "The shipped 'downside' scenario in buy_and_build_model.py remains the",
+    "blueprint's IC guardrail case and is not changed by anything here."
   ],
   "scenarios": [
+    {
+      "name": "severe-downside",
+      "description": "Underwriting stress case: overpay at entry, normalization fails, revenue declines 3% a year, add-on programme partly fails, credit tightens, and the exit re-rates down.",
+      "source": "Author-defined severe downside. NOT the blueprint downside. Built because the blueprint IC guardrail case varies only growth, synergy capture, interest, and the exit mark, and still returns 3.58x, exploring a narrow band of outcomes. This is a modeled capital-impairment case, not a guaranteed lower bound: worse outcomes remain possible.",
+      "_stress_rationale": {
+        "platform_entry_multiple": "6.0x -> 7.0x. Competitive process; we bid up to win.",
+        "platform_ebitda_margin": "20% -> 16.5%. Owner add-backs did not hold and prevailing-wage exposure was understated at diligence.",
+        "platform_margin_expansion_bps_per_year": "50 -> 0. The operational improvement thesis does not land.",
+        "annual_organic_growth": "+5% -> -3%. Loss of a major municipal contract plus budget deferrals across the base. Modelled as post-close decline rather than a smaller platform at entry. Under this model's construction — fixed absolute add-on sizes and an unchanged entry multiple — shrinking the platform raises modeled MOIC, because the lower-multiple add-ons contribute a larger share of a smaller deal. That is an artefact of those held-constant inputs, not a general finding that smaller platforms return more.",
+        "sgna_synergy_capture": "15% -> 5%, realization 50% -> 25%. Integration takes longer and delivers less.",
+        "interest_rate": "8.0% -> 10.5%. Credit conditions tighten as performance deteriorates.",
+        "terminal_multiple": "6.5x -> 5.0x. A shrinking, lower-margin platform does not earn a scaled-platform re-rating.",
+        "add_ons": "Add-on A closes but underperforms its margin case (18% -> 13%); Add-on B closes a year late and smaller; Add-on C never closes."
+      },
+      "assumptions": {
+        "platform_entry_multiple": 7.0,
+        "platform_ebitda_margin": 0.165,
+        "platform_margin_expansion_bps_per_year": 0,
+        "annual_organic_growth": -0.03,
+        "sgna_synergy_capture": 0.05,
+        "first_year_synergy_realization": 0.25,
+        "interest_rate": 0.105,
+        "terminal_multiple": 5.0
+      },
+      "add_ons": [
+        {
+          "name": "Add-on A (underperforms)",
+          "close_year": 2,
+          "revenue_at_close": 2.0,
+          "ebitda_margin": 0.13
+        },
+        {
+          "name": "Add-on B (delayed, smaller)",
+          "close_year": 4,
+          "revenue_at_close": 1.8,
+          "ebitda_margin": 0.15
+        }
+      ]
+    },
+    {
+      "name": "integration-failure",
+      "description": "Isolates add-on execution risk: the platform performs to the base case, but the tuck-in programme underdelivers.",
+      "source": "Author-defined single-driver case. The blueprint downside cannot express this at all, because it varies only assumption rates and never the acquisition schedule.",
+      "_stress_rationale": {
+        "add_ons": "Same failed programme as severe-downside, with every platform assumption left at base. Isolating the driver shows how much of the return depends on tuck-ins actually closing and hitting their case."
+      },
+      "add_ons": [
+        {
+          "name": "Add-on A (underperforms)",
+          "close_year": 2,
+          "revenue_at_close": 2.0,
+          "ebitda_margin": 0.13
+        },
+        {
+          "name": "Add-on B (delayed, smaller)",
+          "close_year": 4,
+          "revenue_at_close": 1.8,
+          "ebitda_margin": 0.15
+        }
+      ]
+    },
     {
       "name": "revenue-decline",
       "description": "Municipal budgets tighten: revenue shrinks 2% a year, synergies half-captured, 9.5% interest, 5.5x exit mark.",

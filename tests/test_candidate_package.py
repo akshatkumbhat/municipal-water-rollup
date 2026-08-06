@@ -23,6 +23,7 @@ from buy_and_build_model import (
     SCENARIOS,
     build_model,
     load_scenarios,
+    return_bridge,
     run_scenario,
 )
 from candidate_package import (
@@ -753,3 +754,73 @@ def test_readme_custom_scenario_command_runs_from_a_clean_checkout(tmp_path) -> 
     assert completed.returncode == 0, completed.stderr[-2000:]
     assert (tmp_path / "out" / "revenue-decline" / "return_summary.json").exists()
     assert (tmp_path / "out" / "scenario_comparison.csv").exists()
+
+
+def test_example_includes_a_severe_downside_worse_than_the_blueprint_case() -> None:
+    """The blueprint guardrail case explores a narrow band; this one is severe."""
+    registry = load_scenarios(EXAMPLE_SCENARIOS)
+    assert "severe-downside" in registry
+
+    severe = run_scenario(registry["severe-downside"]).returns
+    blueprint = run_scenario(SCENARIOS["downside"]).returns
+
+    assert severe["gross_moic"] < blueprint["gross_moic"]
+    assert severe["gross_irr"] < blueprint["gross_irr"]
+    # A modeled capital-impairment case: the sponsor does not recover its
+    # investment. This is a severe downside, not a guaranteed lower bound.
+    assert severe["gross_moic"] < 1.05
+    assert severe["gross_irr"] < 0.01
+
+
+def test_severe_downside_stresses_the_three_required_drivers() -> None:
+    """Entry multiple, platform margin, and add-on integration must all move."""
+    scenario = load_scenarios(EXAMPLE_SCENARIOS)["severe-downside"]
+    a = scenario.assumptions
+
+    assert a.platform_entry_multiple > DEFAULT_ASSUMPTIONS.platform_entry_multiple
+    assert a.platform_ebitda_margin < DEFAULT_ASSUMPTIONS.platform_ebitda_margin
+    assert a.platform_margin_expansion_bps_per_year == 0
+    assert a.annual_organic_growth < 0
+    assert a.terminal_multiple < DEFAULT_ASSUMPTIONS.terminal_multiple
+    assert a.interest_rate > DEFAULT_ASSUMPTIONS.interest_rate
+
+    # Integration failure: a smaller programme, delayed, at worse margins.
+    assert len(scenario.add_ons) < len(SCENARIOS["downside"].add_ons)
+    assert max(x.close_year for x in scenario.add_ons) > 3
+    assert min(x.ebitda_margin for x in scenario.add_ons) < 0.15
+
+
+def test_severe_downside_remains_internally_coherent() -> None:
+    """Severe must not mean broken: debt still amortises and identities hold."""
+    scenario = load_scenarios(EXAMPLE_SCENARIOS)["severe-downside"]
+    result = run_scenario(scenario)
+    schedule = result.schedule
+
+    assert (schedule["Ending Debt"] >= 0).all()
+    assert (schedule["Ending Cash"] >= 0).all()
+    assert (schedule["Free Cash Flow"] > 0).all(), "a stress case, not a liquidity crisis"
+    assert result.returns["leverage_limit_exceeded"] is False
+    assert result.returns["terminal_debt"] < result.returns["initial_debt"]
+
+    bridge = return_bridge(result, scenario.add_ons)
+    walk = bridge[bridge["Component"] != "Exit equity value"]["Value"].sum()
+    assert walk == pytest.approx(result.returns["terminal_equity_value"], abs=1e-9)
+    # The equity story is carried by deleveraging, not by operations.
+    paydown = bridge.loc[bridge["Component"] == "Net debt paydown", "Value"].item()
+    multiple = bridge.loc[bridge["Component"] == "Multiple change", "Value"].item()
+    assert paydown > 0 and multiple < 0
+
+
+def test_integration_failure_isolates_the_add_on_driver() -> None:
+    """Platform assumptions untouched, so the delta is attributable to tuck-ins."""
+    scenario = load_scenarios(EXAMPLE_SCENARIOS)["integration-failure"]
+    a = scenario.assumptions
+
+    assert a.platform_entry_multiple == DEFAULT_ASSUMPTIONS.platform_entry_multiple
+    assert a.platform_ebitda_margin == DEFAULT_ASSUMPTIONS.platform_ebitda_margin
+    assert a.annual_organic_growth == DEFAULT_ASSUMPTIONS.annual_organic_growth
+    assert a.terminal_multiple == DEFAULT_ASSUMPTIONS.terminal_multiple
+
+    result = run_scenario(scenario).returns
+    base = build_model().returns
+    assert result["gross_moic"] < base["gross_moic"]

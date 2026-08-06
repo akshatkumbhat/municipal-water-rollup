@@ -252,15 +252,40 @@ here rather than silently closed.
    conducted directly rather than through those agents, so the findings are not
    independently produced.
 
-**Underwriting — open, highest value**
+**Underwriting — addressed 2026-08-06**
 
-3. **Build a harsher downside case.** The blueprint guardrail case stresses only
-   organic growth, synergy capture, interest rate, and the exit mark, and still
-   returns 3.58x. A defensible stress case must also vary the **entry
-   multiple**, **platform EBITDA margin**, and **add-on integration failure**
-   (a tuck-in that misses its synergy and margin case, or does not close), plus
-   customer or municipal concentration loss. Until then the downside is a
-   sensitivity, not a floor, and the IC summary says so.
+3. **Harsher downside case — DONE.** `examples/scenarios.json` now ships
+   `severe-downside`, which varies the **entry multiple** (6.0x -> 7.0x
+   overpay), **platform EBITDA margin** (20% -> 16.5% with expansion switched
+   off), and **add-on integration failure** (A underperforms its margin case, B
+   closes a year late and smaller, C never closes), alongside -3% organic
+   growth for concentration loss, 10.5% interest, and a 5.0x exit. It returns
+   **0.99x MOIC / -0.2% IRR** — a modeled capital-impairment case in which the
+   sponsor does not recover its investment — while debt still amortises, so it
+   models value destruction rather than a liquidity failure. It is a severe
+   downside, **not a guaranteed lower bound**: a covenant default, a failed
+   platform, or several stresses landing harder would all be worse.
+   A companion `integration-failure` case isolates the tuck-in driver (3.69x),
+   which the blueprint downside cannot express because it never varies the
+   acquisition schedule.
+
+   Modelling note recorded during the build: reducing `platform_revenue` is
+   not a stress **under this model's construction**. With add-on sizes fixed in
+   absolute terms and the entry multiple unchanged, a smaller platform needs
+   proportionally less equity while the lower-multiple add-ons contribute a
+   larger share of the deal, so modeled MOIC rises (+0.16x measured one factor
+   at a time). That is an artefact of those held-constant inputs, not a general
+   conclusion that smaller platforms improve returns. Concentration loss is
+   therefore modelled as post-close revenue decline.
+
+   All single-driver figures above are **one-factor-at-a-time** sensitivities
+   against the base case. They are **not additive** and do not sum to the
+   combined severe-downside result.
+
+   Still open: the shipped `downside` scenario in `buy_and_build_model.py`
+   deliberately remains the blueprint's IC guardrail case and was not changed.
+   Promoting a severe case into the shipped registry, or into the candidate
+   package's scenario set, is a separate decision.
 
 **Low severity — accepted, not scheduled**
 
