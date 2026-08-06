@@ -12,6 +12,7 @@ from operations_kpis import (
     METRIC_DEFINITIONS,
     OPTIONAL_COLUMNS,
     REQUIRED_COLUMNS,
+    TARGET_PROVENANCE,
     Thresholds,
     assign_model_period,
     available_dimensions,
@@ -671,7 +672,9 @@ def test_dimension_rollup_rejects_an_absent_dimension(sample) -> None:
 def test_metric_definitions_table_labels_provenance() -> None:
     table = metric_definitions_table()
     assert len(table) == len(METRIC_DEFINITIONS)
-    assert table["Target provenance"].eq("Author-defined target").all()
+    assert table["Target provenance"].eq(TARGET_PROVENANCE).all()
+    assert table["Target provenance"].str.contains("not externally benchmarked").all()
+    assert table["Target provenance"].str.contains("not an industry standard").all()
     assert table["Value provenance"].eq("Actual (operating data)").all()
     assert table["Definition"].str.len().gt(20).all()
 
@@ -731,3 +734,56 @@ def test_generated_outputs_are_reproducible(tmp_path, sample) -> None:
     write_operating_outputs(sample, second)
     for path in sorted(first.iterdir()):
         assert path.read_bytes() == (second / path.name).read_bytes(), path.name
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: zero-target exception severity (L1).
+# ---------------------------------------------------------------------------
+
+
+def test_zero_target_on_a_lower_is_better_metric_is_high_not_medium(monthly) -> None:
+    """A zero target is zero tolerance; any breach against it is a total miss."""
+    exceptions = exception_report(monthly, Thresholds(monthly_churn=0.0))
+    churn = exceptions[exceptions["Metric"] == "Customer churn (monthly)"]
+
+    assert len(churn) == 1
+    assert churn.iloc[0]["Severity"] == "High"
+    assert churn.iloc[0]["Gap"] < 0
+    assert np.isfinite(churn.iloc[0]["Gap"])
+
+
+def test_zero_target_on_a_higher_is_better_metric_cannot_breach(monthly) -> None:
+    """Nothing can fall below a zero floor, so no exception may be raised."""
+    exceptions = exception_report(monthly, Thresholds(route_density=0.0))
+    assert exceptions[exceptions["Metric"] == "Route density"].empty
+
+
+def test_zero_target_never_divides_by_zero(monthly) -> None:
+    exceptions = exception_report(monthly, Thresholds(monthly_churn=0.0, dso=0.0))
+    assert not exceptions["Gap"].isin([np.inf, -np.inf]).any()
+    assert exceptions["Severity"].isin({"High", "Medium", "Unavailable"}).all()
+
+
+def test_zero_target_does_not_turn_unavailable_data_into_a_breach(sample) -> None:
+    """Unavailable must stay Unavailable regardless of the threshold."""
+    months = sorted(sample["month"].unique())
+    one_month = monthly_rollup(filter_operating_data(sample, start=months[0], end=months[0]))
+    exceptions = exception_report(one_month, Thresholds(monthly_churn=0.0))
+    churn = exceptions[exceptions["Metric"] == "Customer churn (monthly)"]
+    assert churn.iloc[0]["Severity"] == "Unavailable"
+
+
+def test_relative_gap_still_separates_high_from_medium(monthly) -> None:
+    """Non-zero targets keep the 15% relative rule."""
+    marginal = exception_report(monthly, Thresholds(utilization=0.73))
+    severe = exception_report(monthly, Thresholds(utilization=0.99))
+    assert marginal[marginal["Metric"] == "Billable utilization"].iloc[0]["Severity"] == "Medium"
+    assert severe[severe["Metric"] == "Billable utilization"].iloc[0]["Severity"] == "High"
+
+
+def test_target_provenance_is_disclosed_everywhere_targets_appear() -> None:
+    table = metric_definitions_table()
+    assert table["Target provenance"].str.contains("not externally benchmarked").all()
+    assert table["Target provenance"].str.contains("not an industry standard").all()
+    assert "not externally benchmarked" in Thresholds.__doc__
+    assert "not industry standards" in Thresholds.__doc__

@@ -202,7 +202,8 @@ def main() -> None:
     st.caption(
         f"Trailing {window}-month window versus the preceding {window} months. "
         "Ratios are computed from summed numerators and denominators, not as an "
-        "average of monthly ratios. Targets are author-defined."
+        "average of monthly ratios. Targets are author-defined illustrative "
+        "thresholds — not externally benchmarked and not industry standards."
     )
     cards = st.columns(len(METRIC_DEFINITIONS))
     for column, metric in zip(cards, METRIC_DEFINITIONS, strict=True):
@@ -553,10 +554,18 @@ def main() -> None:
         st.subheader("Metric definitions and data lineage")
         st.dataframe(metric_definitions_table(thresholds), width="stretch", hide_index=True)
         st.caption(
-            "Targets are author-defined operating thresholds and are not specified in "
-            "PROJECT_BLUEPRINT.md. Governing KPIs are computed only from operating "
-            "data; plan, capital-structure, and synergy figures come from the Phase 3 "
-            "model and are labelled Modelled."
+            "Targets are author-defined illustrative thresholds. They are **not "
+            "externally benchmarked and are not industry standards**, and are not "
+            "specified in PROJECT_BLUEPRINT.md. Governing KPIs are computed only from "
+            "operating data; plan, capital-structure, and synergy figures come from "
+            "the Phase 3 model and are labelled Modelled."
+        )
+        st.warning(
+            "Customer churn is computed from segment-level customer counts. A "
+            "customer buying several service lines, or served from several regions, "
+            "is counted more than once, which distorts the rate. The figure is **not "
+            "de-duplicated** — doing so needs a customer-level identifier this schema "
+            "does not carry."
         )
 
     # ---------------- Downloads ----------------

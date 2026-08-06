@@ -18,6 +18,7 @@ from buy_and_build_model import (
     return_bridge,
     run_scenario,
     scenario_comparison,
+    sensitivity_axes,
     sensitivity_grid,
     solve_irr,
     sources_and_uses,
@@ -557,3 +558,231 @@ def test_write_scenario_outputs_emits_the_full_output_set(tmp_path) -> None:
     assert recorded["source"].startswith("PROJECT_BLUEPRINT.md")
     assert recorded["assumptions"]["interest_rate"] == pytest.approx(0.08)
     assert len(recorded["add_ons"]) == len(DEFAULT_ADDONS)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: scenario-centred sensitivities, negative growth, synergy add-backs,
+# leverage-limit warnings, and leverage reporting points.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("scenario_name", sorted(SCENARIOS))
+def test_sensitivity_grid_is_centred_on_its_own_scenario(scenario_name: str) -> None:
+    scenario = SCENARIOS[scenario_name]
+    a = scenario.assumptions
+    multiples, growths = sensitivity_axes(a)
+
+    assert a.terminal_multiple in multiples, "scenario's own exit multiple must be an axis point"
+    assert a.annual_organic_growth in growths, "scenario's own growth must be an axis point"
+    assert len(multiples) == 5 and len(growths) == 5
+
+
+@pytest.mark.parametrize("scenario_name", sorted(SCENARIOS))
+@pytest.mark.parametrize("metric", ["gross_moic", "gross_irr"])
+def test_sensitivity_centre_reconciles_to_the_scenario_headline(
+    scenario_name: str, metric: str
+) -> None:
+    scenario = SCENARIOS[scenario_name]
+    a = scenario.assumptions
+    grid = sensitivity_grid(a, scenario.add_ons, metric=metric)
+
+    column = f"{a.terminal_multiple:.1f}x"
+    row = grid[(grid["Organic Growth"] - a.annual_organic_growth).abs() < 1e-12]
+    assert not row.empty, "the scenario's own growth rate is missing from its grid"
+    centre = row.iloc[0][column]
+    assert centre == pytest.approx(run_scenario(scenario).returns[metric], rel=1e-9)
+
+
+def test_custom_scenario_grid_is_centred_on_the_custom_assumptions() -> None:
+    custom = replace(DEFAULT_ASSUMPTIONS, terminal_multiple=5.0, annual_organic_growth=-0.02)
+    multiples, growths = sensitivity_axes(custom)
+    assert 5.0 in multiples
+    assert -0.02 in growths
+
+    grid = sensitivity_grid(custom, DEFAULT_ADDONS)
+    centre = grid[(grid["Organic Growth"] + 0.02).abs() < 1e-12].iloc[0]["5.0x"]
+    assert centre == pytest.approx(build_model(custom).returns["gross_moic"], rel=1e-9)
+
+
+def test_base_sensitivity_axes_are_unchanged_by_centring() -> None:
+    """Centring must reproduce the previously shipped base-case axes exactly."""
+    multiples, growths = sensitivity_axes(DEFAULT_ASSUMPTIONS)
+    assert multiples == (5.5, 6.0, 6.5, 7.0, 7.5)
+    assert growths == (0.02, 0.035, 0.05, 0.065, 0.08)
+
+
+def test_sensitivity_axes_stay_economically_valid() -> None:
+    """A grid must not wander into a non-positive multiple or a -100% decline."""
+    extreme = replace(DEFAULT_ASSUMPTIONS, terminal_multiple=0.6, annual_organic_growth=-0.97)
+    multiples, growths = sensitivity_axes(extreme)
+    assert all(m > 0 for m in multiples)
+    assert all(g > -1 for g in growths)
+
+
+# ---- Negative organic growth -------------------------------------------------
+
+
+def test_negative_organic_growth_is_accepted_and_flows_through() -> None:
+    declining = build_model(replace(DEFAULT_ASSUMPTIONS, annual_organic_growth=-0.02))
+    schedule = declining.schedule
+
+    # Platform revenue must actually shrink year over year.
+    platform = schedule["Revenue"] - schedule["Add-on EBITDA"] * 0  # revenue column as-is
+    assert schedule.iloc[-1]["Platform EBITDA"] < schedule.iloc[0]["Platform EBITDA"]
+    assert (schedule["Ending Debt"] >= 0).all()
+    assert (schedule["Ending Cash"] >= 0).all()
+    assert math.isfinite(declining.returns["gross_moic"])
+    assert declining.returns["gross_moic"] < build_model().returns["gross_moic"]
+    assert platform.notna().all()
+
+    # Every identity still reconciles under decline.
+    bridge = return_bridge(declining)
+    walk = bridge[bridge["Component"] != "Exit equity value"]["Value"].sum()
+    assert walk == pytest.approx(declining.returns["terminal_equity_value"], abs=TOL)
+    for _, row in schedule.iterrows():
+        expected = (
+            row["EBITDA"]
+            - row["Maintenance Capex"]
+            - row["NWC Investment"]
+            - row["Cash Interest"]
+            - row["Cash Taxes"]
+        )
+        assert row["Free Cash Flow"] == pytest.approx(expected, abs=TOL)
+
+
+@pytest.mark.parametrize("growth", [-0.999, -0.5, -0.01, 0.0, 0.5])
+def test_growth_inside_the_supported_range_is_accepted(growth: float) -> None:
+    result = build_model(replace(DEFAULT_ASSUMPTIONS, annual_organic_growth=growth))
+    assert math.isfinite(result.returns["gross_moic"])
+
+
+@pytest.mark.parametrize("growth", [-1.0, -1.5, 1.0, 2.0])
+def test_growth_outside_the_supported_range_is_rejected(growth: float) -> None:
+    with pytest.raises(ValueError, match="must be greater than -1 and less than 1"):
+        build_model(replace(DEFAULT_ASSUMPTIONS, annual_organic_growth=growth))
+
+
+def test_negative_growth_shrinks_revenue_monotonically() -> None:
+    schedule = build_model(
+        replace(DEFAULT_ASSUMPTIONS, annual_organic_growth=-0.05), add_ons=()
+    ).schedule
+    revenues = list(schedule["Revenue"])
+    assert revenues == sorted(revenues, reverse=True)
+
+
+# ---- Leverage synergy add-back ----------------------------------------------
+
+
+def _oversized_case(fraction: float) -> ModelResult:
+    a = replace(
+        DEFAULT_ASSUMPTIONS,
+        initial_debt_to_ebitda=2.5,
+        max_pro_forma_leverage=2.5,
+        leverage_synergy_addback_fraction=fraction,
+    )
+    return build_model(a, (AddOn("Oversized", 2, 20.0, 0.18),))
+
+
+def test_default_excludes_synergies_from_leverage_capacity() -> None:
+    assert DEFAULT_ASSUMPTIONS.leverage_synergy_addback_fraction == 0.0
+    schedule = _oversized_case(0.0).schedule
+    year_two = schedule.iloc[1]
+    # Creditable EBITDA excludes the synergies the year's EBITDA contains.
+    assert year_two["Creditable EBITDA"] == pytest.approx(
+        year_two["Platform EBITDA"] + year_two["Add-on EBITDA"], abs=TOL
+    )
+    assert year_two["Creditable EBITDA"] < year_two["EBITDA"]
+
+
+def test_full_addback_credits_the_entire_realized_synergy() -> None:
+    schedule = _oversized_case(1.0).schedule
+    year_two = schedule.iloc[1]
+    assert year_two["Creditable EBITDA"] == pytest.approx(year_two["EBITDA"], abs=TOL)
+
+
+def test_intermediate_addback_fraction_is_applied_proportionally() -> None:
+    schedule = _oversized_case(0.5).schedule
+    year_two = schedule.iloc[1]
+    expected = (
+        year_two["Platform EBITDA"]
+        + year_two["Add-on EBITDA"]
+        + 0.5 * year_two["Realized Synergies"]
+    )
+    assert year_two["Creditable EBITDA"] == pytest.approx(expected, abs=TOL)
+
+
+def test_more_synergy_credit_means_less_sponsor_equity_when_the_governor_binds() -> None:
+    conservative = _oversized_case(0.0).returns["total_sponsor_equity_invested"]
+    permissive = _oversized_case(1.0).returns["total_sponsor_equity_invested"]
+    assert permissive < conservative, "crediting synergies must reduce staged equity"
+
+
+@pytest.mark.parametrize("fraction", [-0.01, 1.01, 2.0])
+def test_invalid_addback_fraction_is_rejected(fraction: float) -> None:
+    with pytest.raises(
+        ValueError, match="leverage_synergy_addback_fraction must be between 0 and 1 inclusive"
+    ):
+        build_model(replace(DEFAULT_ASSUMPTIONS, leverage_synergy_addback_fraction=fraction))
+
+
+@pytest.mark.parametrize("fraction", [0.0, 0.25, 1.0])
+def test_addback_fraction_does_not_move_shipped_scenarios(fraction: float) -> None:
+    """The governor is inert in shipped cases, so credit policy cannot matter."""
+    for name, scenario in SCENARIOS.items():
+        baseline = run_scenario(scenario).returns
+        altered = build_model(
+            replace(scenario.assumptions, leverage_synergy_addback_fraction=fraction),
+            scenario.add_ons,
+        ).returns
+        assert altered["gross_moic"] == pytest.approx(baseline["gross_moic"], rel=1e-12), name
+        assert altered["total_sponsor_equity_invested"] == pytest.approx(
+            baseline["total_sponsor_equity_invested"], rel=1e-12
+        ), name
+
+
+# ---- Leverage limit warnings and reporting points ---------------------------
+
+
+def test_shipped_scenarios_report_no_leverage_limit_exceedance() -> None:
+    for name, scenario in SCENARIOS.items():
+        returns = run_scenario(scenario).returns
+        assert returns["leverage_limit_exceeded"] is False, name
+        assert returns["leverage_limit_exceeded_years"] == [], name
+
+
+def test_severe_stress_raises_a_visible_leverage_limit_warning() -> None:
+    """Enormous leverage must never be reported silently."""
+    stressed = build_model(
+        replace(
+            DEFAULT_ASSUMPTIONS,
+            initial_debt_to_ebitda=3.9,
+            max_pro_forma_leverage=4.0,
+            interest_rate=0.99,
+        )
+    )
+    returns = stressed.returns
+    assert returns["leverage_limit_exceeded"] is True
+    assert returns["leverage_limit_exceeded_years"] == [1, 2, 3, 4, 5]
+    assert returns["maximum_year_end_gross_leverage"] > returns["leverage_limit"]
+    assert stressed.schedule["Leverage Limit Exceeded"].all()
+
+
+def test_leverage_limit_years_match_the_schedule() -> None:
+    stressed = build_model(
+        replace(DEFAULT_ASSUMPTIONS, initial_debt_to_ebitda=3.9, max_pro_forma_leverage=4.0,
+                interest_rate=0.60)
+    )
+    schedule = stressed.schedule
+    expected = [int(r["Year"]) for _, r in schedule.iterrows() if r["Leverage Limit Exceeded"]]
+    assert stressed.returns["leverage_limit_exceeded_years"] == expected
+
+
+def test_three_leverage_points_are_reported_and_distinct() -> None:
+    returns = build_model().returns
+    assert returns["gross_leverage_at_close"] == pytest.approx(3.0, abs=1e-12)
+    assert returns["maximum_year_end_gross_leverage"] == pytest.approx(2.3022258941, rel=1e-8)
+    assert returns["exit_net_leverage"] == pytest.approx(0.3394, abs=1e-3)
+    # The retained alias must not drift from the year-end maximum.
+    assert returns["peak_gross_leverage"] == returns["maximum_year_end_gross_leverage"]
+    # Close leverage is higher than any year-end figure, which is the point.
+    assert returns["gross_leverage_at_close"] > returns["maximum_year_end_gross_leverage"]

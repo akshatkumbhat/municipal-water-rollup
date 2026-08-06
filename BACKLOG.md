@@ -199,7 +199,81 @@ Acceptance criteria:
 - A reviewer can trace each displayed metric to its source or formula.
 
 ## Phase 6 — Final institutional review
-**Status:** NOT STARTED
+**Status:** DONE (2026-08-05)
+
+Three review passes (data engineering and compliance, PE underwriting, COO
+analytics) were run directly rather than through the project subagents, and
+that deviation is recorded here rather than glossed. Verified clean: no
+secrets across 39 tracked files, no dead code (AST sweep of all seven modules),
+no generated clutter tracked, scoring bounded 0-100 with components summing
+exactly, `robots_allows` fail-closed, and the network guard active across the
+suite. `/code-review` is user-triggered and could not be launched from here;
+`/verify` does not exist in this environment.
+
+Remediated (severity as found):
+
+| # | Finding | Fix |
+|---|---|---|
+| H1 | Standalone sourcing row **and column** order varied between runs — `as_completed` collected results in thread-completion order, and score/confidence ties were unresolved | `enrich_and_score` now collects in submission order; `order_scored_targets` defines one documented total order consumed by both the pipeline and the package |
+| M2 | No leverage-limit reporting; revolver draws bypassed the governor entirely (282x observed under extreme stress, silently) | `leverage_limit`, `leverage_limit_exceeded`, `leverage_limit_exceeded_years`, `maximum_year_end_gross_leverage`; warning surfaced in the console report and IC summary. Deliberately **not** called a covenant breach |
+| M1 | `peak_gross_leverage` is year-end only, hiding the 3.0x position at close | Retained for compatibility; added `gross_leverage_at_close`, `maximum_year_end_gross_leverage`, `exit_net_leverage`. No breaking rename |
+| M3 | README documented `--scenario-file scenarios.json`, a file that did not exist | Added tracked `examples/scenarios.json`; README uses that exact path; the copy-paste command is executed by a test |
+| — | Sensitivity grids always centred on base assumptions | `sensitivity_axes` centres on the active scenario; centre reconciles to that scenario's headline MOIC and IRR. Base axes reproduce the previously shipped values exactly |
+| — | Negative organic growth rejected | Supported on `-1 < growth < 1`; the bound is the revenue multiplier staying positive |
+| — | Synergies counted in full toward leverage capacity | `leverage_synergy_addback_fraction`, author-defined, lender-specific, default **0.0**, validated `[0, 1]`. Capacity uses operating EBITDA plus only the permitted fraction |
+| L1 | Zero target produced a NaN relative gap and fell back to Medium | `_severity` compares absolutely when the target is zero; a breach against zero tolerance ranks High. Unavailable stays Unavailable |
+| — | KPI targets and churn disclosure | Targets labelled "not externally benchmarked, not an industry standard" in the module, dashboard, definitions table, and package; the overlapping-customer churn caveat is now a persistent dashboard warning |
+
+Approved economics are untouched. Base MOIC 4.5388573508072145, IRR
+0.3532851205563101, terminal debt 1.5602039747129886, sponsor equity 6.24;
+downside 3.58x / 29.1%; upside 5.12x / 38.6%. Comparing `return_summary.json`
+against the pre-Phase-6 baseline: **zero pre-existing fields changed**, six
+fields added, none removed. Phase 4 default KPIs are identical. The Phase 5
+selected candidate (Redwood Aqua Group) and package structure are preserved.
+
+Suite grows 242 -> 301. Formatting drift is unchanged at 11 files, the same
+list as before this phase; no prior-phase file was reformatted for style.
+
+### Documented follow-ups
+
+Phase 6 was approved for commit with these items outstanding. They are recorded
+here rather than silently closed.
+
+**Review independence — open**
+
+1. **Run an independent `/code-review` pass.** `/code-review` is user-triggered
+   and billed and could not be launched from this session, so the acceptance
+   criterion "`/verify` and `/code-review` complete successfully where
+   supported" is only partially met. `/verify` does not exist in this
+   environment at all.
+2. **Optionally re-run the three project subagents** —
+   `data-engineering-reviewer`, `pe-underwriter`, and `coo-dashboard-reviewer` —
+   for a genuinely independent second opinion. The Phase 6 reviews were
+   conducted directly rather than through those agents, so the findings are not
+   independently produced.
+
+**Underwriting — open, highest value**
+
+3. **Build a harsher downside case.** The blueprint guardrail case stresses only
+   organic growth, synergy capture, interest rate, and the exit mark, and still
+   returns 3.58x. A defensible stress case must also vary the **entry
+   multiple**, **platform EBITDA margin**, and **add-on integration failure**
+   (a tuck-in that misses its synergy and margin case, or does not close), plus
+   customer or municipal concentration loss. Until then the downside is a
+   sensitivity, not a floor, and the IC summary says so.
+
+**Low severity — accepted, not scheduled**
+
+4. **Repository-wide formatting drift.** `ruff format --check` reports 11 files.
+   This predates Phase 6, is unchanged by it, and is not an enforced gate
+   (`make lint` runs `ruff check`, not `ruff format`). Prior-phase files were
+   deliberately not reformatted for style.
+5. **Placeholder user-agent contact.** `sourcing_pipeline.USER_AGENT` carries
+   `compliance-contact@example.com`. The README already instructs replacing it
+   before any live scraping; the code does not warn. Left as documentation.
+6. **Historical Phase 0 audit.** `AUDIT_PHASE0.md` cites the pre-Phase-3 flat
+   output layout. It is a dated point-in-time audit record, not current
+   documentation, and is intentionally left unedited.
 
 Acceptance criteria:
 - Data engineering, finance, and COO reviewers each complete an independent review.

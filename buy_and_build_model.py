@@ -71,6 +71,13 @@ class Assumptions:
     # point: the blueprint requires financing sized to covenant headroom
     # rather than to a headline IRR.
     max_pro_forma_leverage: float = 4.0
+    # Share of realized synergies allowed into the EBITDA used to size
+    # acquisition debt capacity. Author-defined and lender-specific: it is a
+    # modelling input, not a covenant term. Defaults to 0.0 — the conservative
+    # position that lenders credit only delivered operating EBITDA. Real credit
+    # agreements vary widely and typically cap add-backs, require documented
+    # actions, and impose realization windows and look-forward limits.
+    leverage_synergy_addback_fraction: float = 0.0
 
 
 DEFAULT_ADDONS = (
@@ -88,7 +95,6 @@ DEFAULT_ASSUMPTIONS = Assumptions()
 # consolidating 100% of an acquired company's SG&A are all degenerate.
 _UNIT_INTERVAL_FIELDS = (
     "platform_ebitda_margin",
-    "annual_organic_growth",
     "platform_margin_cap",
     "add_on_sgna_pct_revenue",
     "sgna_synergy_capture",
@@ -99,11 +105,19 @@ _UNIT_INTERVAL_FIELDS = (
     "transaction_fee_pct_ev",
 )
 
-# Realization timing assumptions, validated on the closed interval [0, 1].
-# Full realization in the acquisition year is a legitimate input — an owner
-# salary eliminated at close is captured immediately, not phased — so 1.0 must
-# be accepted rather than rejected as out of range.
-_REALIZATION_FIELDS = ("first_year_synergy_realization",)
+# Realization and lender-treatment assumptions, validated on the closed
+# interval [0, 1]. Full realization in the acquisition year is a legitimate
+# input — an owner salary eliminated at close is captured immediately, not
+# phased — so 1.0 must be accepted rather than rejected as out of range.
+_INCLUSIVE_UNIT_INTERVAL_FIELDS = (
+    "first_year_synergy_realization",
+    "leverage_synergy_addback_fraction",
+)
+
+# Growth may be negative: a shrinking business is a valid case to underwrite.
+# The bound is the revenue multiplier (1 + g), which must stay strictly
+# positive, so growth of -100% or worse is rejected.
+_GROWTH_FIELDS = ("annual_organic_growth",)
 
 _POSITIVE_FIELDS = (
     "platform_revenue",
@@ -163,7 +177,7 @@ class ModelResult:
     scenario: str
     schedule: pd.DataFrame
     funding: tuple[FundingEvent, ...]
-    returns: dict[str, float]
+    returns: dict[str, Any]
 
 
 def validate_assumptions(a: Assumptions, add_ons: Iterable[AddOn]) -> None:
@@ -173,10 +187,17 @@ def validate_assumptions(a: Assumptions, add_ons: Iterable[AddOn]) -> None:
         value = getattr(a, field_name)
         if not 0 <= value < 1:
             raise ValueError(f"{field_name} must be between 0 and 1")
-    for field_name in _REALIZATION_FIELDS:
+    for field_name in _INCLUSIVE_UNIT_INTERVAL_FIELDS:
         value = getattr(a, field_name)
         if not 0 <= value <= 1:
             raise ValueError(f"{field_name} must be between 0 and 1 inclusive")
+    for field_name in _GROWTH_FIELDS:
+        value = getattr(a, field_name)
+        if not -1 < value < 1:
+            raise ValueError(
+                f"{field_name} must be greater than -1 and less than 1: the annual "
+                "revenue multiplier (1 + growth) must stay positive"
+            )
     for field_name in _POSITIVE_FIELDS:
         if getattr(a, field_name) <= 0:
             raise ValueError(f"{field_name} must be positive")
@@ -361,8 +382,16 @@ def build_model(
         ebitda = platform_ebitda + add_on_ebitda_pre_synergy + realized_synergies
 
         # Fund this year's closings: debt to the leverage ceiling measured on
-        # pro-forma EBITDA including the businesses being acquired, then equity.
-        remaining_capacity = max(a.max_pro_forma_leverage * ebitda - ending_debt_prior, 0.0)
+        # delivered operating EBITDA plus only the permitted share of synergies,
+        # then equity. Crediting 100% of projected synergies would assume a
+        # lender treatment nobody has agreed to; the default fraction is 0.0.
+        operating_ebitda = platform_ebitda + add_on_ebitda_pre_synergy
+        creditable_ebitda = (
+            operating_ebitda + a.leverage_synergy_addback_fraction * realized_synergies
+        )
+        remaining_capacity = max(
+            a.max_pro_forma_leverage * creditable_ebitda - ending_debt_prior, 0.0
+        )
         acquisition_debt_draw = 0.0
         acquisition_equity = 0.0
         for add_on in closing_this_year:
@@ -428,6 +457,10 @@ def build_model(
                 "Ending Cash": ending_cash,
                 "Gross Leverage": ending_debt / ebitda,
                 "Net Leverage": (ending_debt - ending_cash) / ebitda,
+                "Creditable EBITDA": creditable_ebitda,
+                "Leverage Limit Exceeded": bool(
+                    ending_debt / ebitda > a.max_pro_forma_leverage
+                ),
             }
         )
         ending_debt_prior = ending_debt
@@ -457,8 +490,14 @@ def build_model(
     )
     blended_entry_multiple = (platform_ev + total_add_on_ev) / total_entry_ebitda
     peak_leverage = float(model["Gross Leverage"].max())
+    leverage_at_close = (
+        initial_debt / platform_ebitda_at_close if platform_ebitda_at_close else float("nan")
+    )
+    exceeded_years = [
+        int(row["Year"]) for _, row in model.iterrows() if bool(row["Leverage Limit Exceeded"])
+    ]
 
-    returns = {
+    returns: dict[str, Any] = {
         "platform_enterprise_value": platform_ev,
         "platform_transaction_fees": platform_fees,
         "initial_debt": initial_debt,
@@ -475,7 +514,20 @@ def build_model(
         "terminal_debt": terminal_debt,
         "terminal_cash": terminal_cash,
         "terminal_equity_value": terminal_equity_value,
+        # Leverage is reported at three distinct points, because one number
+        # cannot describe all of them. `peak_gross_leverage` is retained for
+        # compatibility and is measured on reported year-END periods only; it
+        # does not see the position at the platform closing.
         "peak_gross_leverage": peak_leverage,
+        "maximum_year_end_gross_leverage": peak_leverage,
+        "gross_leverage_at_close": leverage_at_close,
+        "exit_net_leverage": float(model.iloc[-1]["Net Leverage"]),
+        # Whether year-end gross leverage ever exceeds the modelled funding
+        # governor. This is a model-limit warning, not a covenant breach: no
+        # covenant is modelled anywhere in this repository.
+        "leverage_limit": a.max_pro_forma_leverage,
+        "leverage_limit_exceeded": bool(exceeded_years),
+        "leverage_limit_exceeded_years": exceeded_years,
         "gross_moic": moic,
         "gross_irr": irr,
     }
@@ -571,17 +623,53 @@ def return_bridge(result: ModelResult, add_ons: Iterable[AddOn] = DEFAULT_ADDONS
     return pd.DataFrame(rows)
 
 
+# Sensitivity axes are built as two steps either side of the active scenario's
+# own assumptions, so the centre cell always reconciles to that scenario's
+# headline return rather than to the base case.
+SENSITIVITY_MULTIPLE_STEP = 0.5
+SENSITIVITY_GROWTH_STEP = 0.015
+SENSITIVITY_OFFSETS = (-2, -1, 0, 1, 2)
+
+
+def sensitivity_axes(assumptions: Assumptions) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Exit-multiple and organic-growth axes centred on this scenario.
+
+    The centre of each axis is the scenario's own assumption, so a reviewer can
+    find the headline MOIC and IRR inside the scenario's own grid. Values are
+    clamped to stay economically valid — a non-positive exit multiple or a
+    growth rate at or below -100% is not a case, it is a broken input.
+    """
+    centre_multiple = assumptions.terminal_multiple
+    centre_growth = assumptions.annual_organic_growth
+    multiples = tuple(
+        round(max(centre_multiple + offset * SENSITIVITY_MULTIPLE_STEP, 0.5), 10)
+        for offset in SENSITIVITY_OFFSETS
+    )
+    growths = tuple(
+        round(max(centre_growth + offset * SENSITIVITY_GROWTH_STEP, -0.99), 10)
+        for offset in SENSITIVITY_OFFSETS
+    )
+    return multiples, growths
+
+
 def sensitivity_grid(
     assumptions: Assumptions,
     add_ons: Iterable[AddOn],
     *,
     metric: str = "gross_moic",
-    exit_multiples: Sequence[float] = (5.5, 6.0, 6.5, 7.0, 7.5),
-    growth_rates: Sequence[float] = (0.02, 0.035, 0.05, 0.065, 0.08),
+    exit_multiples: Sequence[float] | None = None,
+    growth_rates: Sequence[float] | None = None,
 ) -> pd.DataFrame:
-    """Grid of `metric` across exit multiple (columns) and organic growth (rows)."""
+    """Grid of `metric` across exit multiple (columns) and organic growth (rows).
+
+    Axes default to `sensitivity_axes(assumptions)`, i.e. centred on the active
+    scenario. Passing explicit axes overrides that.
+    """
     if metric not in {"gross_moic", "gross_irr"}:
         raise ValueError(f"unsupported sensitivity metric: {metric}")
+    default_multiples, default_growths = sensitivity_axes(assumptions)
+    exit_multiples = default_multiples if exit_multiples is None else exit_multiples
+    growth_rates = default_growths if growth_rates is None else growth_rates
     add_ons = tuple(add_ons)
     rows: list[dict[str, Any]] = []
     for growth in growth_rates:
@@ -722,6 +810,7 @@ def write_scenario_outputs(scenario: Scenario, result: ModelResult, output_dir: 
     (output_dir / "return_summary.json").write_text(
         json.dumps(result.returns, indent=2), encoding="utf-8"
     )
+    multiples, growths = sensitivity_axes(scenario.assumptions)
     (output_dir / "assumptions.json").write_text(
         json.dumps(
             {
@@ -730,6 +819,32 @@ def write_scenario_outputs(scenario: Scenario, result: ModelResult, output_dir: 
                 "source": scenario.source,
                 "assumptions": asdict(scenario.assumptions),
                 "add_ons": [asdict(add_on) for add_on in scenario.add_ons],
+                "sensitivity": {
+                    "centred_on_scenario": scenario.name,
+                    "centre_exit_multiple": scenario.assumptions.terminal_multiple,
+                    "centre_organic_growth": scenario.assumptions.annual_organic_growth,
+                    "exit_multiple_axis": list(multiples),
+                    "organic_growth_axis": list(growths),
+                    "note": (
+                        "Grids are centred on this scenario's own assumptions. The centre "
+                        "cell reconciles to this scenario's headline gross_moic / gross_irr."
+                    ),
+                },
+                "leverage_reporting": {
+                    "gross_leverage_at_close": "debt at the platform closing / entry EBITDA",
+                    "maximum_year_end_gross_leverage": "highest reported year-end gross leverage",
+                    "peak_gross_leverage": "retained alias of maximum_year_end_gross_leverage",
+                    "leverage_limit": (
+                        "max_pro_forma_leverage — an author-defined modelling governor, "
+                        "not a covenant. No covenant is modelled in this repository."
+                    ),
+                    "leverage_synergy_addback_fraction": (
+                        "Author-defined, lender-specific share of realized synergies "
+                        "credited when sizing acquisition debt capacity. Default 0.0. "
+                        "Actual lender credit depends on documentation, caps, timing, "
+                        "and realization requirements."
+                    ),
+                },
             },
             indent=2,
         ),
@@ -746,7 +861,15 @@ def scenario_comparison(results: Mapping[str, ModelResult]) -> pd.DataFrame:
             "Terminal Debt": result.returns["terminal_debt"],
             "Equity Invested": result.returns["total_sponsor_equity_invested"],
             "Exit Equity Value": result.returns["terminal_equity_value"],
+            "Gross Leverage at Close": result.returns["gross_leverage_at_close"],
+            "Max Year-End Gross Leverage": result.returns["maximum_year_end_gross_leverage"],
             "Peak Gross Leverage": result.returns["peak_gross_leverage"],
+            "Leverage Limit": result.returns["leverage_limit"],
+            "Leverage Limit Exceeded": result.returns["leverage_limit_exceeded"],
+            "Leverage Limit Exceeded Years": ", ".join(
+                str(year) for year in result.returns["leverage_limit_exceeded_years"]
+            )
+            or "—",
             "Gross MOIC": result.returns["gross_moic"],
             "Gross IRR": result.returns["gross_irr"],
         }
@@ -802,12 +925,25 @@ def _print_report(scenario: Scenario, result: ModelResult) -> None:
     print(bridge.to_string(index=False, float_format=lambda x: f"{x:,.2f}"))
     print("\nRETURN SUMMARY\n")
     for key, value in result.returns.items():
-        if key in {"gross_irr"}:
+        if isinstance(value, bool):
+            print(f"{key:32s}: {'YES' if value else 'no'}")
+        elif isinstance(value, list | tuple):
+            print(f"{key:32s}: {', '.join(str(item) for item in value) or '—'}")
+        elif key in {"gross_irr"}:
             print(f"{key:32s}: {value:.1%}")
-        elif key.endswith(("multiple", "moic", "leverage")):
+        elif "leverage" in key or key.endswith(("multiple", "moic", "limit")):
             print(f"{key:32s}: {value:.2f}x")
         else:
             print(f"{key:32s}: ${value:,.2f}M")
+
+    if result.returns["leverage_limit_exceeded"]:
+        years = ", ".join(str(y) for y in result.returns["leverage_limit_exceeded_years"])
+        print(
+            f"\nWARNING: year-end gross leverage exceeds the modelled funding governor "
+            f"of {result.returns['leverage_limit']:.2f}x in year(s) {years}. "
+            f"Maximum reached: {result.returns['maximum_year_end_gross_leverage']:.2f}x. "
+            "This is a model-limit warning, not a covenant breach."
+        )
 
 
 def main() -> None:

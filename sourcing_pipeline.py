@@ -723,7 +723,51 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     scored["data_confidence"] = (
         present.mul(20) + website_ok.mul(25) + keyword_positive.mul(15)
     ).clip(upper=100)
-    return scored.sort_values(["priority_score", "data_confidence"], ascending=False)
+    return order_scored_targets(scored)
+
+
+# The documented total ordering for scored targets. Score and confidence alone
+# leave ties unresolved, so their relative order fell out of thread-pool
+# completion order and changed between runs. Normalized name and then a stable
+# source identifier make the order total, so repeated runs — concurrent or not
+# — produce byte-identical output. No score is recomputed by ordering.
+TARGET_ORDER_COLUMNS = ("priority_score", "data_confidence", "_name_key", "_source_key")
+TARGET_ORDER_ASCENDING = (False, False, True, True)
+
+
+def order_scored_targets(scored: pd.DataFrame) -> pd.DataFrame:
+    """Impose the documented total order on scored targets.
+
+    Ordering is, in sequence:
+
+    1. `priority_score` descending — the scoring methodology decides first;
+    2. `data_confidence` descending — better-evidenced records rank higher;
+    3. normalized company name ascending — a deterministic, human-meaningful
+       tiebreak once the methodology has stopped discriminating;
+    4. registrable domain then source URL ascending — a stable identifier that
+       separates records which normalize to the same name.
+
+    Blueprint technician-band preference is deliberately *not* applied here:
+    it is candidate-selection logic, not a property of the scored universe.
+    `candidate_package.select_candidate` layers it on top of this order.
+    """
+    if scored.empty:
+        return scored.copy()
+
+    working = scored.copy()
+    names = working.get("company_name", pd.Series("", index=working.index, dtype=object))
+    working["_name_key"] = names.fillna("").astype(str).map(normalize_name)
+
+    domains = working.get("domain", pd.Series("", index=working.index, dtype=object))
+    urls = working.get("company_url", pd.Series("", index=working.index, dtype=object))
+    working["_source_key"] = (
+        domains.fillna("").astype(str) + "|" + urls.fillna("").astype(str)
+    )
+
+    ordered = working.sort_values(
+        list(TARGET_ORDER_COLUMNS), ascending=list(TARGET_ORDER_ASCENDING), kind="mergesort"
+    )
+    return ordered.drop(columns=["_name_key", "_source_key"]).reset_index(drop=True)
 
 
 def load_sources(path: str | None) -> tuple[DirectorySource, ...]:
@@ -867,7 +911,12 @@ def enrich_and_score(
         future_map = {
             executor.submit(enrich_company, fetcher, row, verified_on): row for row in rows
         }
-        for future in futures.as_completed(future_map):
+        # Collect in SUBMISSION order, not completion order. Enrichment still
+        # runs concurrently, but results are assembled deterministically. With
+        # `as_completed` both the row order and the DataFrame's column order
+        # (taken from whichever record happened to finish first, and blocked
+        # records carry fewer keys) varied between runs and worker counts.
+        for future in future_map:
             try:
                 enriched.append(future.result())
             except Exception as exc:  # last-resort isolation; one target must not kill the run

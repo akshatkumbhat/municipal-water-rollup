@@ -164,6 +164,24 @@ python sourcing_pipeline.py --offline-demo --output outputs/targets_demo.csv --m
 
 This runs 50+ fictional companies through the identical normalization, deduplication, enrichment, and scoring path used for live sources. All fixture companies are synthetic (reserved `example.com` domains); nothing in the demo is a claim about a real company. The same fixtures drive the network-free automated test suite.
 
+### Deterministic ordering
+
+Scored targets carry one documented **total order**, defined by
+`sourcing_pipeline.order_scored_targets` and consumed by both the standalone
+pipeline and `candidate_package.py` so the two cannot drift apart:
+
+1. `priority_score` descending — the scoring methodology decides first;
+2. `data_confidence` descending — better-evidenced records rank higher;
+3. normalized company name ascending;
+4. registrable domain, then source URL, ascending — a stable identifier for
+   records that normalize to the same name.
+
+Score and confidence alone leave ties unresolved, which previously made row
+order depend on thread-pool completion order and differ between runs. Ordering
+recomputes no score. Blueprint technician-band preference is deliberately *not*
+part of this order — that is candidate-selection logic, applied on top by
+`candidate_package.select_candidate`.
+
 ### Deduplication audit trail
 
 Records are merged when they share any of four signals — registrable **domain**, canonical **phone**, normalized **name**, or normalized **address** — using a deterministic union-find. Merges are never silent: each surviving row carries `duplicate_count`, `merged_from` (the names it absorbed), and `merge_reason` (which signals matched). Note that address-only matches can merge distinct firms sharing a building; treat `merge_reason == "address"` merges as review candidates.
@@ -173,7 +191,7 @@ Records are merged when they share any of four signals — registrable **domain*
 ```bash
 python buy_and_build_model.py --output-dir outputs/model          # all scenarios
 python buy_and_build_model.py --scenario downside                 # one scenario
-python buy_and_build_model.py --scenario-file scenarios.json      # custom cases
+python buy_and_build_model.py --scenario-file examples/scenarios.json   # custom cases
 ```
 
 Each scenario writes a directory under the output directory:
@@ -201,7 +219,14 @@ value-creation bridge. It is marked as author-defined in `assumptions.json`;
 the blueprint does not specify an upside.
 
 Custom scenarios need no code change. A `--scenario-file` entry supplies
-overrides only; omitted keys keep their base value, and unknown keys raise:
+overrides only; omitted keys keep their base value, and unknown keys raise.
+A working example ships in `examples/scenarios.json` with three author-defined
+cases — a revenue-decline case, a no-add-on credit stress, and one that lets a
+lender credit the full synergy add-back:
+
+```bash
+python buy_and_build_model.py --scenario-file examples/scenarios.json
+```
 
 ```json
 {"scenarios": [{"name": "credit-stress",
@@ -209,6 +234,10 @@ overrides only; omitted keys keep their base value, and unknown keys raise:
                 "assumptions": {"interest_rate": 0.12},
                 "add_ons": []}]}
 ```
+
+Organic growth may be **negative** — a shrinking business is a valid case to
+underwrite. The bound is the revenue multiplier `(1 + growth)`, which must stay
+positive, so growth is accepted on `-1 < growth < 1`.
 
 ### Modeling conventions
 
@@ -221,6 +250,21 @@ overrides only; omitted keys keep their base value, and unknown keys raise:
 - Interest accrues on average debt; the resulting interest/tax/cash-sweep
   circularity is solved in closed form, not iterated. Every schedule line
   reconciles to an identity that the test suite checks.
+- Acquisition debt capacity is sized on delivered **operating** EBITDA plus
+  only `leverage_synergy_addback_fraction` of realized synergies. That input is
+  **author-defined and lender-specific**, defaults to `0.0`, and is *not* a
+  covenant term: real credit agreements cap add-backs and impose documentation,
+  timing, and realization requirements.
+- Leverage is reported at three distinct points, because no single number
+  describes all of them: `gross_leverage_at_close` (3.00x in the base case),
+  `maximum_year_end_gross_leverage` (2.30x, also exposed as the retained alias
+  `peak_gross_leverage`), and `exit_net_leverage` (0.34x). `peak_gross_leverage`
+  sees reported year-**end** periods only and does not observe the closing
+  position.
+- `leverage_limit_exceeded` and `leverage_limit_exceeded_years` flag any year
+  where year-end gross leverage exceeds `max_pro_forma_leverage` — for example
+  after a revolver draw under stress. This is a **model-limit warning, not a
+  covenant breach**; no covenant is modelled anywhere in this repository.
 - All levered free cash flow sweeps to debt. Cash accumulates only after debt
   is fully repaid; a cash shortfall draws the revolver rather than producing
   negative cash.

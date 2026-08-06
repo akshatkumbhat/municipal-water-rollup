@@ -9,13 +9,22 @@ and that Phase 3 and Phase 4 results are unchanged by the integration.
 from __future__ import annotations
 
 import json
+import pathlib
 import re
 import shutil
+import subprocess
+import sys
 
 import pandas as pd
 import pytest
 
-from buy_and_build_model import SCENARIOS, build_model, run_scenario
+from buy_and_build_model import (
+    DEFAULT_ASSUMPTIONS,
+    SCENARIOS,
+    build_model,
+    load_scenarios,
+    run_scenario,
+)
 from candidate_package import (
     MANIFEST_NAME,
     PROVENANCE,
@@ -356,7 +365,9 @@ def test_summary_returns_reconcile_to_the_model(package, ic_summary) -> None:
             f"| {name} | {returns['gross_moic']:.2f}x | {returns['gross_irr']:.1%} | "
             f"${returns['terminal_equity_value']:,.2f}M | "
             f"${returns['terminal_debt']:,.2f}M | "
-            f"{returns['peak_gross_leverage']:.2f}x |"
+            f"{returns['gross_leverage_at_close']:.2f}x | "
+            f"{returns['maximum_year_end_gross_leverage']:.2f}x | "
+            f"{'YES' if returns['leverage_limit_exceeded'] else 'no'} |"
         )
         assert row in ic_summary, f"{name} row missing or not reconciling"
 
@@ -378,12 +389,42 @@ def test_summary_matches_the_generated_scenario_comparison(package, ic_summary) 
         assert f"| {row['Scenario']} | {row['Gross MOIC']:.2f}x |" in ic_summary
 
 
-def test_summary_leverage_reconciles_to_the_schedule(package, ic_summary) -> None:
+def test_summary_distinguishes_close_year_end_and_exit_leverage(package, ic_summary) -> None:
+    """One number cannot describe leverage at close, peak, and exit."""
+    returns = package.results["base"].returns
     schedule = package.results["base"].schedule
-    peak = float(schedule["Gross Leverage"].max())
-    exit_net = float(schedule.iloc[-1]["Net Leverage"])
-    assert f"peaks at {peak:.2f}x" in ic_summary
-    assert f"{exit_net:.2f}x net by Year 5" in ic_summary
+
+    assert returns["gross_leverage_at_close"] == pytest.approx(3.0, abs=1e-9)
+    assert returns["maximum_year_end_gross_leverage"] == pytest.approx(
+        float(schedule["Gross Leverage"].max()), abs=1e-12
+    )
+    assert returns["exit_net_leverage"] == pytest.approx(
+        float(schedule.iloc[-1]["Net Leverage"]), abs=1e-12
+    )
+    # The retained alias must stay equal to the year-end maximum.
+    assert returns["peak_gross_leverage"] == returns["maximum_year_end_gross_leverage"]
+
+    for value, field in (
+        (returns["gross_leverage_at_close"], "`gross_leverage_at_close`"),
+        (returns["maximum_year_end_gross_leverage"], "`maximum_year_end_gross_leverage`"),
+        (returns["exit_net_leverage"], "`exit_net_leverage`"),
+    ):
+        assert f"{value:.2f}x" in ic_summary
+        assert field in ic_summary
+    assert "does not see the" in ic_summary
+
+
+def test_summary_reports_the_leverage_limit_state(package, ic_summary) -> None:
+    returns = package.results["base"].returns
+    assert returns["leverage_limit_exceeded"] is False
+    assert "No year exceeds the modelled 4.00x governor" in ic_summary
+    assert "not a covenant" in ic_summary.lower()
+
+
+def test_summary_labels_the_synergy_addback_as_author_defined(package, ic_summary) -> None:
+    assert "leverage_synergy_addback_fraction" in ic_summary
+    assert "not a covenant term" in ic_summary
+    assert "documentation, caps, timing" in ic_summary
 
 
 def test_summary_bridge_matches_the_generated_bridge(package, ic_summary) -> None:
@@ -458,12 +499,21 @@ def test_limitations_document_discloses_known_gaps(package) -> None:
         "Operating data is synthetic",
         "not derived from the candidate",
         "downside case is not severe",
-        "Sensitivity grids are centred on the base case",
-        "Negative organic growth cannot be modelled",
+        "modelling input, not a covenant",
+        "Lender credit for synergies is assumed, not agreed",
+        "Leverage is not one number",
         "not externally benchmarked",
         "overlapping customers",
     ):
         assert phrase in text, phrase
+
+    # Items remediated in Phase 6 must no longer be listed as limitations.
+    for stale in (
+        "Sensitivity grids are centred on the base case",
+        "Negative organic growth cannot be modelled",
+        "Synergies count toward covenant capacity",
+    ):
+        assert stale not in text, f"stale limitation still disclosed: {stale}"
 
 
 def test_assumption_table_labels_every_source(package) -> None:
@@ -634,3 +684,72 @@ def test_shutil_is_not_used_to_remove_unmanaged_content(tmp_path) -> None:
     # ...but it is then reported as unlisted, not silently included.
     assert any("UNLISTED FILE" in p for p in verify_package(out / MANIFEST_NAME))
     shutil.rmtree(out)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: the shipped custom-scenario example (M3).
+# ---------------------------------------------------------------------------
+
+EXAMPLE_SCENARIOS = pathlib.Path(__file__).resolve().parent.parent / "examples" / "scenarios.json"
+
+
+def test_example_scenario_file_is_tracked_and_valid() -> None:
+    """The README points at this path; it must exist and load."""
+    assert EXAMPLE_SCENARIOS.exists(), "README references examples/scenarios.json"
+    registry = load_scenarios(EXAMPLE_SCENARIOS)
+    assert registry, "example file defines no scenarios"
+    for name, scenario in registry.items():
+        assert scenario.description, name
+        assert "Author-defined" in scenario.source, name
+
+
+def test_example_includes_a_negative_growth_case() -> None:
+    registry = load_scenarios(EXAMPLE_SCENARIOS)
+    declining = [s for s in registry.values() if s.assumptions.annual_organic_growth < 0]
+    assert declining, "the example must demonstrate negative organic growth"
+    result = run_scenario(declining[0])
+    assert result.returns["gross_moic"] > 0
+    assert (result.schedule["Ending Debt"] >= 0).all()
+
+
+def test_example_scenarios_are_override_only() -> None:
+    """Omitted keys must keep their base value, proving override-only loading."""
+    registry = load_scenarios(EXAMPLE_SCENARIOS)
+    for scenario in registry.values():
+        assert scenario.assumptions.platform_revenue == DEFAULT_ASSUMPTIONS.platform_revenue
+        assert scenario.assumptions.tax_rate == DEFAULT_ASSUMPTIONS.tax_rate
+
+
+def test_example_file_still_rejects_unknown_keys(tmp_path) -> None:
+    payload = json.loads(EXAMPLE_SCENARIOS.read_text(encoding="utf-8"))
+    payload["scenarios"][0]["assumptions"]["intrest_rate"] = 0.1
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown assumption"):
+        load_scenarios(broken)
+
+
+def test_readme_custom_scenario_command_runs_from_a_clean_checkout(tmp_path) -> None:
+    """Execute the exact command the README prints, as a reviewer would."""
+    repo = pathlib.Path(__file__).resolve().parent.parent
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    assert "--scenario-file examples/scenarios.json" in readme, "README command drifted"
+    assert "--scenario-file scenarios.json" not in readme, "stale path still documented"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "buy_and_build_model.py",
+            "--scenario-file",
+            "examples/scenarios.json",
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert completed.returncode == 0, completed.stderr[-2000:]
+    assert (tmp_path / "out" / "revenue-decline" / "return_summary.json").exists()
+    assert (tmp_path / "out" / "scenario_comparison.csv").exists()

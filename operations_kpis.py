@@ -22,8 +22,9 @@ model's assumption rates so the demo is internally coherent — sample
 property of the generated sample data, not of the KPI pipeline: an uploaded
 dataset's cash columns are genuine actuals and are never touched by the model.
 
-Targets are author-defined operating thresholds; they are not specified in
-`PROJECT_BLUEPRINT.md` and are labelled `Author-defined target`.
+Targets are author-defined illustrative thresholds. They are **not externally
+benchmarked and are not industry standards**, are not specified in
+`PROJECT_BLUEPRINT.md`, and are labelled as such wherever they are shown.
 
 Run:
     python operations_kpis.py --output-dir outputs/operations
@@ -98,7 +99,13 @@ _NON_NEGATIVE = (
 
 @dataclass(frozen=True)
 class Thresholds:
-    """Author-defined operating targets. Not sourced from the blueprint."""
+    """Author-defined illustrative operating targets.
+
+    These are **not externally benchmarked and are not industry standards**.
+    They are not specified in `PROJECT_BLUEPRINT.md` and carry no evidentiary
+    weight; they exist so the exception workflow is demonstrable. Replace them
+    with benchmarked values before using this dashboard to manage a business.
+    """
 
     route_density: float = 7.0  # completed jobs per 100 route miles
     utilization: float = 0.72
@@ -284,7 +291,7 @@ def metric_definitions_table(thresholds: Thresholds | None = None) -> pd.DataFra
                 "Source columns": ", ".join(m.source_columns),
                 "Better when": m.direction,
                 "Target": getattr(t, m.threshold_field),
-                "Target provenance": "Author-defined target",
+                "Target provenance": TARGET_PROVENANCE,
                 "Value provenance": m.provenance,
             }
             for m in METRIC_DEFINITIONS
@@ -659,6 +666,32 @@ def kpi_summary(
     return pd.DataFrame(rows)
 
 
+#: Stated wherever a target is shown, so no reader mistakes it for a benchmark.
+TARGET_PROVENANCE = (
+    "Author-defined illustrative target; not externally benchmarked, "
+    "not an industry standard"
+)
+
+#: A breach this far below target, in relative terms, is High rather than Medium.
+HIGH_SEVERITY_RELATIVE_GAP = 0.15
+
+
+def _severity(gap: float, target: float) -> str:
+    """Rank a breach without dividing by a zero target.
+
+    A zero target expresses zero tolerance, so any breach against it is a
+    total miss and ranks High. Falling back to Medium — which is what dividing
+    by zero and testing a NaN used to produce — would understate exactly the
+    strictest thresholds an operator sets.
+    """
+    if not np.isfinite(gap):
+        return "Medium"
+    if target == 0 or not np.isfinite(target):
+        return "High"
+    relative = abs(gap) / abs(target)
+    return "High" if relative >= HIGH_SEVERITY_RELATIVE_GAP else "Medium"
+
+
 def exception_report(
     monthly: pd.DataFrame,
     thresholds: Thresholds | None = None,
@@ -694,8 +727,7 @@ def exception_report(
             if metric.direction == "higher"
             else comparison.target - comparison.current
         )
-        relative = _ratio(abs(gap), abs(comparison.target))
-        severity = "High" if np.isfinite(relative) and relative >= 0.15 else "Medium"
+        severity = _severity(gap, comparison.target)
         rows.append(
             {
                 "Metric": comparison.label,

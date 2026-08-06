@@ -63,8 +63,17 @@ def test_provenance_banner_names_the_source_and_scenario(app: AppTest) -> None:
 
 
 def test_no_unhandled_warning_state_on_the_default_view(app: AppTest) -> None:
-    """The default view has data, so filter warnings must not be showing."""
-    assert not app.warning
+    """The default view has data, so no *filter* warning may show.
+
+    One warning is expected and required: the churn overlapping-customer
+    caveat, which is deliberately persistent rather than tucked into a tooltip.
+    """
+    texts = [w.value for w in app.warning]
+    assert not any("No rows match" in text for text in texts)
+    assert not any("Select both a start and an end date" in text for text in texts)
+    assert any("not** de-duplicated" in text or "de-duplicated" in text for text in texts), (
+        "the churn caveat warning must remain visible"
+    )
 
 
 def test_plan_table_shows_all_five_model_years_by_default(app: AppTest) -> None:

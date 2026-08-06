@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "Example custom scenarios for buy_and_build_model.py.",
+    "Run: python buy_and_build_model.py --scenario-file examples/scenarios.json",
+    "",
+    "Each entry supplies OVERRIDES ONLY. Any assumption not listed keeps its",
+    "base-case value. Unknown assumption keys are rejected rather than ignored.",
+    "'add_ons' is optional; omit it to keep the blueprint add-on schedule, or",
+    "supply [] to model the platform with no tuck-ins.",
+    "",
+    "These cases are author-defined illustrations, not blueprint scenarios."
+  ],
+  "scenarios": [
+    {
+      "name": "revenue-decline",
+      "description": "Municipal budgets tighten: revenue shrinks 2% a year, synergies half-captured, 9.5% interest, 5.5x exit mark.",
+      "source": "Author-defined illustration. Not specified in PROJECT_BLUEPRINT.md.",
+      "assumptions": {
+        "annual_organic_growth": -0.02,
+        "sgna_synergy_capture": 0.075,
+        "interest_rate": 0.095,
+        "terminal_multiple": 5.5
+      }
+    },
+    {
+      "name": "credit-stress",
+      "description": "No tuck-ins and expensive debt: platform only, 12% interest, flat growth.",
+      "source": "Author-defined illustration. Not specified in PROJECT_BLUEPRINT.md.",
+      "assumptions": {
+        "annual_organic_growth": 0.0,
+        "interest_rate": 0.12
+      },
+      "add_ons": []
+    },
+    {
+      "name": "lender-credits-synergies",
+      "description": "Tests the financing governor when a lender credits the full synergy add-back at a 2.5x ceiling.",
+      "source": "Author-defined illustration. Lender treatment is not a covenant term.",
+      "assumptions": {
+        "initial_debt_to_ebitda": 2.5,
+        "max_pro_forma_leverage": 2.5,
+        "leverage_synergy_addback_fraction": 1.0
+      }
+    }
+  ]
+}

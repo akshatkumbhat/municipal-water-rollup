@@ -16,10 +16,11 @@ Every generated artifact is byte-identical across runs from a clean output
 directory. Two upstream sources of volatility are handled here rather than by
 changing Phase 2:
 
-* `sourcing_pipeline` sorts targets by score and confidence only. Five fixture
-  companies tie at exactly (100.0, 100), so their relative order falls out of
-  thread-pool completion order. This module applies an explicit, documented
-  tiebreak before writing anything.
+* Scored-target ordering is owned by `sourcing_pipeline.order_scored_targets`,
+  which defines one documented total order (score, confidence, normalized name,
+  then a stable source identifier). This module consumes that function rather
+  than keeping a second ordering rule, so the standalone pipeline and the
+  package cannot drift apart.
 * `sourcing_pipeline` stamps a wall-clock `scraped_at_utc` on every row. That
   column is not carried into the package; the run's as-of date is isolated in
   a single `as_of` block in the manifest and can be pinned with `--as-of`.
@@ -196,18 +197,13 @@ def generate_target_universe(verified_on: str, *, workers: int = 8) -> pd.DataFr
 
 
 def order_targets(targets: pd.DataFrame) -> pd.DataFrame:
-    """Impose a total order on scored targets.
+    """Delegate to the sourcing module's documented total order.
 
-    The pipeline sorts by score then confidence, which leaves ties unordered
-    and therefore dependent on thread-pool completion order. Company name is
-    unique across the fixture set, so appending it yields a total order and a
-    reproducible file. This is presentation ordering, not a scoring change:
-    no score is recomputed.
+    Ordering is owned by `sourcing_pipeline.order_scored_targets` so the
+    standalone pipeline and this package cannot drift apart. This wrapper
+    exists only so package code reads naturally.
     """
-    return targets.sort_values(
-        ["priority_score", "data_confidence", "company_name"],
-        ascending=[False, False, True],
-    ).reset_index(drop=True)
+    return sourcing.order_scored_targets(targets)
 
 
 def select_candidate(targets: pd.DataFrame) -> CandidateSelection:
@@ -371,8 +367,9 @@ def limitations_markdown() -> str:
     """
     return """# Known limitations
 
-Every item below is a real constraint on this package. None is fixed here;
-they are recorded so a reviewer is not misled about what the outputs support.
+Every item below is a real constraint on this package, recorded so a reviewer
+is not misled about what these outputs support. They are disclosures, not
+to-do items: each is a property of the deliverable as shipped.
 
 ## Data integrity
 
@@ -401,15 +398,21 @@ they are recorded so a reviewer is not misled about what the outputs support.
 5. **The downside case is not severe.** It stresses only organic growth,
    synergy capture, interest rate, and the exit mark. It does not stress the
    entry multiple, platform margin, customer concentration, or add-on
-   execution failure. It should not be read as a floor.
-6. **Sensitivity grids are centred on the base case.** The growth axis does
-   not contain the downside (3%) or upside (7%) growth rates, so those grids
-   contain no cell equal to their own headline MOIC.
-7. **Negative organic growth cannot be modelled.** Validation rejects growth
-   below zero, so a revenue-decline case is not expressible.
-8. **Synergies count toward covenant capacity.** The leverage governor
-   measures headroom on EBITDA including realized synergies, which is more
-   permissive than a typical lender's synergy add-back treatment.
+   execution failure. It should not be read as a floor. This remains the most
+   significant open limitation of the underwriting.
+6. **The leverage governor is a modelling input, not a covenant.**
+   `max_pro_forma_leverage` sizes acquisition debt; no covenant is modelled
+   anywhere in this repository. `leverage_limit_exceeded` flags years where
+   year-end gross leverage passes that governor — for example after a revolver
+   draw under stress — and is a model-limit warning only.
+7. **Lender credit for synergies is assumed, not agreed.**
+   `leverage_synergy_addback_fraction` defaults to 0.0, so debt capacity is
+   sized on delivered operating EBITDA. Any non-zero value is an author-defined
+   assumption about lender behaviour; real credit agreements cap add-backs and
+   impose documentation, timing, and realization requirements.
+8. **Leverage is not one number.** Leverage at the platform closing (3.00x in
+   the base case) is higher than the maximum reported year-end figure (2.30x).
+   `peak_gross_leverage` observes year-end periods only.
 
 ## Operating KPIs
 
@@ -468,9 +471,6 @@ def render_ic_summary(
     bridge = return_bridge(base, SCENARIOS["base"].add_ons)
     su = sources_and_uses(base)
     su_total = su.iloc[-1]
-    schedule = base.schedule
-    peak_leverage = float(schedule["Gross Leverage"].max())
-    exit_leverage = float(schedule.iloc[-1]["Net Leverage"])
 
     def bridge_value(component: str) -> float:
         return float(bridge.loc[bridge["Component"] == component, "Value"].item())
@@ -608,14 +608,16 @@ def render_ic_summary(
     # ---- Returns
     add("## 5. Returns  `modelled`")
     add("")
-    add("| Scenario | MOIC | Gross IRR | Exit equity | Terminal debt | Peak leverage |")
-    add("|---|---:|---:|---:|---:|---:|")
+    add("| Scenario | MOIC | Gross IRR | Exit equity | Terminal debt | Close lev. | Max year-end lev. | Limit exceeded |")
+    add("|---|---:|---:|---:|---:|---:|---:|---|")
     for name in SCENARIO_ORDER:
         r = results[name].returns
         add(
             f"| {name} | {_turns(r['gross_moic'])} | {_pct(r['gross_irr'])} | "
             f"{_money(r['terminal_equity_value'])} | {_money(r['terminal_debt'])} | "
-            f"{_turns(r['peak_gross_leverage'])} |"
+            f"{_turns(r['gross_leverage_at_close'])} | "
+            f"{_turns(r['maximum_year_end_gross_leverage'])} | "
+            f"{'YES' if r['leverage_limit_exceeded'] else 'no'} |"
         )
     add("")
     add("Source: `02_model/scenario_comparison.csv` and each scenario's")
@@ -646,15 +648,38 @@ def render_ic_summary(
     # ---- Leverage
     add("## 7. Leverage and liquidity  `modelled`")
     add("")
-    add(f"Opening leverage is {_turns(SCENARIOS['base'].assumptions.initial_debt_to_ebitda)} EBITDA at close. ")
-    add(f"Year-end gross leverage peaks at {_turns(peak_leverage)} and deleverages to ")
-    add(f"{_turns(exit_leverage)} net by Year 5, with terminal debt of {_money(br['terminal_debt'])}.")
+    add("Leverage is reported at three distinct points, because no single number")
+    add("describes all of them:")
+    add("")
+    add("| Point | Value | Field |")
+    add("|---|---:|---|")
+    add(f"| At the platform closing | {_turns(br['gross_leverage_at_close'])} | `gross_leverage_at_close` |")
+    add(f"| Maximum reported year-end | {_turns(br['maximum_year_end_gross_leverage'])} | `maximum_year_end_gross_leverage` (alias `peak_gross_leverage`) |")
+    add(f"| Exit (net of cash) | {_turns(br['exit_net_leverage'])} | `exit_net_leverage` |")
+    add("")
+    add(f"Terminal debt is {_money(br['terminal_debt'])}. Note that `peak_gross_leverage`")
+    add("observes reported year-**end** periods only and therefore does not see the")
+    add("closing position, which is the higher of the two.")
     add("")
     add("All positive levered free cash flow sweeps to debt. Add-on financing is capped")
-    add(f"at a {_turns(SCENARIOS['base'].assumptions.max_pro_forma_leverage)} pro-forma leverage governor "
-        "(`author`), with any excess funded by sponsor equity; the governor is inert in")
-    add("the base case, so no equity is staged. Detail in")
-    add("`03_operating/capital_structure.csv`.")
+    add(f"at a {_turns(br['leverage_limit'])} pro-forma leverage governor (`author`), with any excess")
+    add("funded by sponsor equity; the governor is inert in the base case, so no equity")
+    add("is staged. Capacity is sized on delivered **operating** EBITDA plus only")
+    add(f"{_pct(SCENARIOS['base'].assumptions.leverage_synergy_addback_fraction)} of realized synergies "
+        "(`leverage_synergy_addback_fraction`, `author`,")
+    add("default 0.0). That is a modelling input, **not a covenant term**: actual lender")
+    add("credit for synergies depends on documentation, caps, timing, and realization")
+    add("requirements. Detail in `03_operating/capital_structure.csv`.")
+    add("")
+    if br["leverage_limit_exceeded"]:
+        years = ", ".join(str(y) for y in br["leverage_limit_exceeded_years"])
+        add("> **Leverage-limit warning.** Year-end gross leverage exceeds the modelled")
+        add(f"> {_turns(br['leverage_limit'])} governor in year(s) {years}, reaching")
+        add(f"> {_turns(br['maximum_year_end_gross_leverage'])}. This is a model-limit warning, not a")
+        add("> covenant breach — no covenant is modelled in this repository.")
+    else:
+        add(f"No year exceeds the modelled {_turns(br['leverage_limit'])} governor "
+            "(`leverage_limit_exceeded`: false).")
     add("")
     add("Note the blueprint's claim that add-on financing keeps pro-forma leverage below")
     add("2.5x holds **post-close**; leverage at the platform closing is 3.0x by design.")
