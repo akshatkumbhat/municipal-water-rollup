@@ -99,21 +99,50 @@ _NON_NEGATIVE = (
 
 @dataclass(frozen=True)
 class Thresholds:
-    """Author-defined illustrative operating targets.
+    """Operating targets, each labelled with whether a benchmark supports it.
 
-    These are **not externally benchmarked and are not industry standards**.
-    They are not specified in `PROJECT_BLUEPRINT.md` and carry no evidentiary
-    weight; they exist so the exception workflow is demonstrable. Replace them
-    with benchmarked values before using this dashboard to manage a business.
+    Three of these are now anchored to published ranges; four are not, because
+    no usable published benchmark was found. The distinction is carried per
+    metric in `METRIC_DEFINITIONS[*].benchmark` and surfaced in the definitions
+    table, so a reviewer can tell a sourced target from an asserted one at a
+    glance. See `RESEARCH_BENCHMARKS.md` sections 9-10 for the citations.
+
+    **Benchmarked `[C]`:**
+
+    * `utilization` 0.78 — field services commonly report 75%-85% billable
+      utilization; TSIA puts the industry average at 83% and pacesetters at
+      90.6%. 0.78 sits mid-band. The denominator matters enormously and is
+      stated explicitly: this is billable / **paid** hours, not billable /
+      available hours, and published figures using the latter are not
+      comparable.
+    **Author-defined, informed by indicative `[D]` sources** — practitioner
+    material not verified against primary research, so these values are the
+    author's judgement rather than benchmarks:
+
+    * `dso` 65.0 — commercial B2B on Net-30 averages ~45 days, but government
+      and municipal contracting regularly runs 60+ days with 60-90 day cycles
+      common. 65 is the conservative end of the municipal range. The previous
+      55-day target assumed better-than-municipal collection from a
+      deliberately municipal payer base.
+    * `monthly_churn` 0.0134 — municipal O&M contract renewal above 85%
+      annually is the threshold associated with platform pricing. 85% annual
+      retention implies roughly 1.34% monthly churn. The previous 0.008 was
+      stricter than the cited platform threshold without a stated reason.
+
+    **Not benchmarked — author-defined, retained as illustrative:**
+    `route_density`, `gross_margin`, `recurring_mix`, `fcf_conversion`. No
+    published figure was found for these in route-based municipal water
+    services at this scale. They are **not industry standards** and carry no
+    evidentiary weight.
     """
 
     route_density: float = 7.0  # completed jobs per 100 route miles
-    utilization: float = 0.72
+    utilization: float = 0.78
     gross_margin: float = 0.42
     recurring_mix: float = 0.60
-    monthly_churn: float = 0.008
+    monthly_churn: float = 0.0134
     fcf_conversion: float = 0.55
-    dso: float = 55.0  # days
+    dso: float = 65.0  # days
 
 
 @dataclass(frozen=True)
@@ -147,6 +176,12 @@ class MetricDefinition:
     threshold_field: str
     provenance: str
     action: str
+    #: Published range supporting the target, or an explicit statement that none
+    #: was found. Never left blank — an empty benchmark reads as "unchecked".
+    benchmark: str
+    #: Source tier per RESEARCH_BENCHMARKS.md: [A] peer-reviewed, [B] government,
+    #: [C] industry research, [D] practitioner, or "none".
+    benchmark_tier: str
 
 
 METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
@@ -165,6 +200,10 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="route_density",
         provenance="Actual (operating data)",
         action="Re-cluster dispatch zones; review job sequencing with the branch dispatcher.",
+        benchmark=(
+            "No published benchmark identified for jobs per 100 route miles in route-based municipal water services. Target is author-defined."
+        ),
+        benchmark_tier="none",
     ),
     MetricDefinition(
         key="utilization",
@@ -178,6 +217,10 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="utilization",
         provenance="Actual (operating data)",
         action="Review crew sizing, travel time, and rework hours by technician cohort.",
+        benchmark=(
+            "Field services commonly report 75%-85% billable utilization; TSIA reports an 83% industry average and 90.6% for pacesetters. Comparability depends on the denominator: this metric uses PAID hours."
+        ),
+        benchmark_tier="[C]",
     ),
     MetricDefinition(
         key="gross_margin",
@@ -194,6 +237,10 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="gross_margin",
         provenance="Actual (operating data)",
         action="Reprice the weakest service line; audit job costing on loss-making work.",
+        benchmark=(
+            "No published gross-margin benchmark identified at this scale and service mix. Note the sector EBITDA range is 10%-16%, which constrains but does not determine gross margin. Target is author-defined."
+        ),
+        benchmark_tier="none",
     ),
     MetricDefinition(
         key="recurring_mix",
@@ -210,6 +257,10 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="recurring_mix",
         provenance="Actual (operating data)",
         action="Convert transactional accounts to programmatic contracts at renewal.",
+        benchmark=(
+            "No published recurring-mix benchmark identified. PROJECT_BLUEPRINT.md requires at least 50% recurring revenue for an anchor platform; the 60% target is a stricter author-defined choice."
+        ),
+        benchmark_tier="none",
     ),
     MetricDefinition(
         key="monthly_churn",
@@ -231,6 +282,13 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="monthly_churn",
         provenance="Actual (operating data)",
         action="Escalate at-risk municipal renewals; run win-back on lapsed accounts.",
+        benchmark=(
+            "Municipal O&M renewal above 85% annually is associated with platform "
+            "pricing, implying roughly 1.34% monthly churn at a constant rate. "
+            "Brokerage-sourced and not verified against a primary study, so the "
+            "target it informs is author-defined rather than benchmarked."
+        ),
+        benchmark_tier="[D] indicative",
     ),
     MetricDefinition(
         key="fcf_conversion",
@@ -253,6 +311,10 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="fcf_conversion",
         provenance="Actual (operating data)",
         action="Tighten collections cadence and defer non-essential fleet capex.",
+        benchmark=(
+            "No published FCF-conversion benchmark identified for this sector and scale. Target is author-defined."
+        ),
+        benchmark_tier="none",
     ),
     MetricDefinition(
         key="dso",
@@ -270,6 +332,10 @@ METRIC_DEFINITIONS: tuple[MetricDefinition, ...] = (
         threshold_field="dso",
         provenance="Actual (operating data)",
         action="Escalate aged municipal invoices; confirm PO and retainage blockers.",
+        benchmark=(
+            "Commercial B2B on Net-30 averages ~45 days; government and municipal contracting regularly runs 60+ days, with 60-90 day cycles common."
+        ),
+        benchmark_tier="[D] indicative",
     ),
 )
 
@@ -291,7 +357,9 @@ def metric_definitions_table(thresholds: Thresholds | None = None) -> pd.DataFra
                 "Source columns": ", ".join(m.source_columns),
                 "Better when": m.direction,
                 "Target": getattr(t, m.threshold_field),
-                "Target provenance": TARGET_PROVENANCE,
+                "Target provenance": target_provenance(m),
+                "Benchmark": m.benchmark,
+                "Benchmark tier": m.benchmark_tier,
                 "Value provenance": m.provenance,
             }
             for m in METRIC_DEFINITIONS
@@ -666,11 +734,35 @@ def kpi_summary(
     return pd.DataFrame(rows)
 
 
-#: Stated wherever a target is shown, so no reader mistakes it for a benchmark.
+#: Wording used where no published benchmark supports a target.
 TARGET_PROVENANCE = (
     "Author-defined illustrative target; not externally benchmarked, "
     "not an industry standard"
 )
+
+#: Wording used where a published range does support the target.
+BENCHMARKED_TARGET_PROVENANCE = (
+    "Benchmarked against published ranges; see RESEARCH_BENCHMARKS.md. "
+    "Still a target, not a standard"
+)
+
+
+def target_provenance(metric: MetricDefinition) -> str:
+    """Per-metric provenance, so sourced and asserted targets are never conflated.
+
+    Practitioner-tier sources cannot validate a target. Under the provenance
+    rule in `RESEARCH_BENCHMARKS.md`, a `[D]` figure may *inform* a judgement,
+    and the resulting number is then author-defined — not benchmarked. Only
+    `[A]`-`[C]` sources support a "benchmarked" claim.
+    """
+    if metric.benchmark_tier == "none":
+        return TARGET_PROVENANCE
+    if metric.benchmark_tier.startswith("[D]"):
+        return (
+            "Author-defined, informed by indicative practitioner sources that are "
+            "not verified against primary research; not an industry standard"
+        )
+    return f"{BENCHMARKED_TARGET_PROVENANCE} {metric.benchmark_tier}"
 
 #: A breach this far below target, in relative terms, is High rather than Medium.
 HIGH_SEVERITY_RELATIVE_GAP = 0.15
@@ -1182,7 +1274,13 @@ def generate_sample_data(
     )
     frame["delta_nwc"] = frame["revenue"] * float(assumptions.nwc_pct_incremental_revenue)
 
-    dso = np.clip(58 - month_index_arr * 0.25 + rng.normal(0, 3.5, len(frame)), 32, 78)
+    # Municipal receivables, not commercial. Government contracting regularly
+    # runs 60+ days with 60-90 day cycles common, so the sample starts near the
+    # top of that band and improves ~0.2 days a month as the modelled collections
+    # cadence takes hold. The previous curve (58 days improving to ~42) assumed
+    # better-than-municipal collection from an explicitly municipal payer base,
+    # which flattered the very metric the thesis is most exposed on.
+    dso = np.clip(82 - month_index_arr * 0.20 + rng.normal(0, 4.0, len(frame)), 55, 95)
     days = frame["month"].dt.days_in_month.astype(float)
     frame["accounts_receivable"] = frame["revenue"] * dso / days
 

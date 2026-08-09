@@ -683,6 +683,73 @@ def sensitivity_grid(
     return pd.DataFrame(rows)
 
 
+#: Add-on entry multiples spanning the modelled 3.5x up through the range the
+#: multiple-arbitrage literature commonly cites (5x-6x). See
+#: RESEARCH_BENCHMARKS.md section 6.
+ADD_ON_ENTRY_MULTIPLES: tuple[float, ...] = (3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5)
+
+#: The range commonly cited for add-on acquisitions in buy-and-build arbitrage.
+CITED_ADD_ON_ENTRY_RANGE = (5.0, 6.0)
+
+
+def add_on_entry_sensitivity(
+    assumptions: Assumptions,
+    add_ons: Iterable[AddOn],
+    *,
+    entry_multiples: Sequence[float] = ADD_ON_ENTRY_MULTIPLES,
+) -> pd.DataFrame:
+    """Returns as a function of what the add-ons actually cost.
+
+    The model buys tuck-ins at a fixed 3.5x. Published discussion of add-on
+    multiple arbitrage more commonly describes buying at 5x-6x, and the sector's
+    own transaction range starts at 6x. If add-ons genuinely clear at 3.5x that
+    is a sourcing edge and should be argued as one; if they do not, a material
+    part of the modelled arbitrage is not available.
+
+    This table answers the question directly rather than leaving a reviewer to
+    assume. `Within Cited Range` marks the rows that sit inside the 5x-6x band,
+    so the gap between the modelled price and the cited one is legible.
+    """
+    add_ons = tuple(add_ons)
+    if not add_ons:
+        return pd.DataFrame(
+            columns=[
+                "Add-on Entry Multiple",
+                "Within Cited Range",
+                "Blended Entry Multiple",
+                "Total Add-on EV ($M)",
+                "Sponsor Equity ($M)",
+                "Gross MOIC",
+                "Gross IRR",
+                "MOIC vs Modelled",
+            ]
+        )
+
+    baseline: float | None = None
+    rows: list[dict[str, Any]] = []
+    for multiple in entry_multiples:
+        repriced = tuple(replace(add_on, entry_multiple=multiple) for add_on in add_ons)
+        result = build_model(assumptions, repriced)
+        returns = result.returns
+        if baseline is None:
+            baseline = float(returns["gross_moic"])
+        rows.append(
+            {
+                "Add-on Entry Multiple": multiple,
+                "Within Cited Range": (
+                    CITED_ADD_ON_ENTRY_RANGE[0] <= multiple <= CITED_ADD_ON_ENTRY_RANGE[1]
+                ),
+                "Blended Entry Multiple": returns["blended_entry_multiple"],
+                "Total Add-on EV ($M)": returns["total_add_on_enterprise_value"],
+                "Sponsor Equity ($M)": returns["total_sponsor_equity_invested"],
+                "Gross MOIC": returns["gross_moic"],
+                "Gross IRR": returns["gross_irr"],
+                "MOIC vs Modelled": float(returns["gross_moic"]) - float(baseline),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _blueprint_scenarios() -> dict[str, Scenario]:
     return {
         "base": Scenario(
@@ -807,6 +874,9 @@ def write_scenario_outputs(scenario: Scenario, result: ModelResult, output_dir: 
         sensitivity_grid(scenario.assumptions, scenario.add_ons, metric=metric).to_csv(
             output_dir / filename, index=False
         )
+    add_on_entry_sensitivity(scenario.assumptions, scenario.add_ons).to_csv(
+        output_dir / "sensitivity_add_on_entry.csv", index=False
+    )
     (output_dir / "return_summary.json").write_text(
         json.dumps(result.returns, indent=2), encoding="utf-8"
     )

@@ -359,6 +359,114 @@ def assumption_provenance_table(scenario: Scenario) -> pd.DataFrame:
     )
 
 
+def assumption_benchmark_table(scenario: Scenario) -> pd.DataFrame:
+    """Every material model input against the published range, with a verdict.
+
+    The point of this table is that it shows conservatism and aggression with
+    equal prominence. A reviewer should be able to see in one pass which inputs
+    sit inside the evidence and which do not, without reading the model.
+
+    Tiers follow `RESEARCH_BENCHMARKS.md`: [A] peer-reviewed, [B] government,
+    [C] industry research, [D] practitioner/brokerage. "none" means no usable
+    published figure was found, which is itself a finding.
+
+    **Verdicts resting on `[D]` sources are marked "indicative only" and are not
+    load-bearing.** Practitioner and brokerage material has not been verified
+    against primary research; it may inform a judgement but must not be
+    presented as evidence that validates or condemns a model input. That rule
+    was adopted after a `[D]`-sourced statistic reached this package as fact and
+    was later falsified — see `RESEARCH_BENCHMARKS.md` section 3.
+    """
+    a = scenario.assumptions
+    rows = [
+        (
+            "Platform EBITDA margin",
+            f"{a.platform_ebitda_margin:.1%}",
+            "10%-16% for water/wastewater service operators (brokerage-sourced)",
+            "[D] indicative",
+            "Possibly ABOVE — indicative only",
+            "Modelled margin exceeds the top of the cited operating band. Either the "
+            "target is genuinely premium or the normalization is optimistic.",
+        ),
+        (
+            "Platform entry multiple",
+            f"{a.platform_entry_multiple:.1f}x",
+            "6x-12x transactions; sub-$10M municipal O&M at the low end (brokerage-sourced)",
+            "[D] indicative",
+            "Inside (low end) — indicative only",
+            "Consistent with a sub-$10M O&M operator.",
+        ),
+        (
+            "Add-on entry multiple",
+            f"{scenario.add_ons[0].entry_multiple:.1f}x" if scenario.add_ons else "n/a",
+            "5x-6x commonly cited for add-on arbitrage; 6x-12x sector range (both brokerage-sourced)",
+            "[D] indicative",
+            "BELOW range — indicative only",
+            "Below every cited range. If add-ons genuinely clear here that is a "
+            "sourcing edge and must be argued as one; otherwise the modelled "
+            "multiple arbitrage is overstated.",
+        ),
+        (
+            "Year-5 exit mark",
+            f"{a.terminal_multiple:.1f}x",
+            "13.9x sector median; 6x-12x transaction range (brokerage-sourced)",
+            "[D] indicative",
+            "BELOW range (conservative) — indicative only",
+            "At or below the bottom of the observed distribution. A genuine, "
+            "citable conservatism that partly offsets the margin assumption.",
+        ),
+        (
+            "Opening leverage",
+            f"{a.initial_debt_to_ebitda:.1f}x",
+            "~3.2x average under $250M EV; 3.5x-4.5x LMM transactions",
+            "[C]",
+            "Inside (conservative)",
+            "Below the transaction norm; well supported.",
+        ),
+        (
+            "Interest rate",
+            f"{a.interest_rate:.1%}",
+            "8.1%-10.4% LMM senior debt 2023-2025; ~9.8%-11.3% implied at "
+            "SOFR 4.3% + 550-700bps (Feb 2026)",
+            "[C]",
+            "BELOW range",
+            "Below current market. The severe-downside case at 10.5% is the one "
+            "that reflects today's cost of debt.",
+        ),
+        (
+            "Organic growth",
+            f"{a.annual_organic_growth:.1%}",
+            "No published sector-specific figure identified",
+            "none",
+            "Unbenchmarked",
+            "Blueprint assumption; not externally supported.",
+        ),
+        (
+            "Customer concentration limit",
+            "20% single / 55% top-ten (blueprint screen)",
+            "PE flags >15% single; >30% severe; top-five >50% a concern",
+            "[C]",
+            "LOOSER than practice",
+            "The blueprint screen admits more concentration than institutional "
+            "practice typically accepts, and tests the top ten rather than the "
+            "top five.",
+        ),
+    ]
+    return pd.DataFrame(
+        [
+            {
+                "Assumption": name,
+                "Model value": value,
+                "Published range": benchmark,
+                "Tier": tier,
+                "Verdict": verdict,
+                "Comment": comment,
+            }
+            for name, value, benchmark, tier, verdict, comment in rows
+        ]
+    )
+
+
 def limitations_markdown() -> str:
     """Known limitations carried into the deliverable rather than hidden.
 
@@ -537,14 +645,37 @@ def render_ic_summary(
     add("and founder-owned, route density compounds with scale, and asset data creates")
     add("switching costs.")
     add("")
+    add("**The demand driver is documented, not asserted.**")
+    add("EPA's 2022 Clean Watersheds Needs Survey identifies **$630.1 billion** of")
+    add("needed but unfunded clean-water investment over twenty years — a **73% increase**")
+    add("over the 2012 survey. AWWA's *Buried No Longer* puts replacement of aging")
+    add("drinking-water pipe alone at **over $1 trillion across 25 years**, excluding")
+    add("sewer, stormwater, and treatment plants. Sustained IIJA-level funding closes")
+    add("roughly **$125 billion** of that gap, leaving the large majority unfunded.")
+    add("A need growing 73% in a decade against funding that closes a fraction of it")
+    add("is the strongest single fact supporting this thesis. Sources and tiers in")
+    add("`RESEARCH_BENCHMARKS.md` section 1.")
+    add("")
     add("The strategy deliberately excludes regulated utility ownership, commodity-heavy")
     add("civil construction, equipment manufacturing, and environmental remediation with")
     add("unknown liabilities.")
     add("")
     add("**Anchor acquisition criteria** (`blueprint`): $7-15M revenue; 18-25% normalized")
     add("EBITDA margin; at least 60% municipal customers; at least 50% recurring revenue;")
-    add(f"{ANCHOR_TECHNICIAN_MIN}-{ANCHOR_TECHNICIAN_MAX} technicians; no customer above 20% of revenue;")
+    add(f"{ANCHOR_TECHNICIAN_MIN}-{ANCHOR_TECHNICIAN_MAX} technicians;")
     add("maintenance capex below 4% of revenue.")
+    add("")
+    add("**Concentration screen — tightened against the blueprint.** The blueprint")
+    add("permits any single customer up to 20% of revenue and tests the top ten below")
+    add("55%. Institutional practice is stricter: buyers commonly flag a single")
+    add("customer **above 15%**, treat **above 30%** as severe (associated with a 20%-35%")
+    add("valuation discount, and enough for many institutional buyers to walk), and")
+    add("test the **top five above 50%** rather than the top ten. US GAAP requires")
+    add("disclosure at 10%. This case therefore adopts the tighter screen — **no single")
+    add("customer above 15%, top five below 50%** — and treats the blueprint's limits")
+    add("as the outer bound rather than the target. A platform that only clears the")
+    add("blueprint screen would not clear a typical institutional buyer, and pricing")
+    add("would reflect that. See `RESEARCH_BENCHMARKS.md` section 11.")
     add("")
 
     # ---- Funnel and candidate
@@ -624,6 +755,49 @@ def render_ic_summary(
     add("`return_summary.json`. IRR is solved on the actual equity cash-flow vector,")
     add("not derived from MOIC. The Year-5 value is a **valuation mark, not an assumed")
     add("sale**.")
+    add("")
+    add("### Where this sits against the published evidence")
+    add("")
+    add("The peer-reviewed literature is **broadly supportive of buy-and-build**, which")
+    add("moves the burden rather than removing it. Studies surveyed in Hammer et al.")
+    add("(2022) find that deals with add-on acquisitions **outperform** those without on")
+    add("IRR. That paper, covering 3,399 buyouts from 1997-2020, also finds sponsors pay")
+    add("**premiums comparable to those strategic acquirers pay** for matched targets —")
+    add("and still earn above-average equity returns, through both top-line growth and")
+    add("multiple expansion.")
+    add("")
+    add("> **So the exposure is not the strategy. It is what we paid.** If the central")
+    add("> empirical finding is that sponsors pay a premium for these platforms, the")
+    add("> question this committee should press is not whether buy-and-build works, but")
+    add("> whether we paid the premium and what we assumed to justify it.")
+    add("")
+    add("That question lands on add-on entry pricing, and the answer is uncomfortable.")
+    add("The model buys tuck-ins at a fixed **3.5x**, below every range identified for")
+    add("comparable transactions. `02_model/base/sensitivity_add_on_entry.csv` prices")
+    add("the exposure directly: paying an indicative market 5.0x-6.0x costs **0.41x to")
+    add("0.68x of MOIC**, taking the base case from 4.54x to between 4.13x and 3.86x.")
+    add("The thesis survives paying market for add-ons — but it should be underwritten")
+    add("on that basis, not on a sourcing edge the package does not evidence.")
+    add("")
+    add("Two further risks the same literature names, and this case must answer rather")
+    add("than assume away:")
+    add("")
+    add("1. **Late-entrant disadvantage.** Add-ons are found to be detrimental where the")
+    add("   sponsor arrives late to a consolidation. A fragmented-market thesis assumes")
+    add("   we are early; nothing in this package establishes that.")
+    add("2. **Limited attention.** The same work finds add-on productivity depends on")
+    add("   sponsor bandwidth. Three tuck-ins in four years is a real claim on it. The")
+    add("   `integration-failure` scenario in `examples/scenarios.json` prices that")
+    add("   failure at 3.69x against the base case's 4.54x.")
+    add("")
+    add("**A correction is recorded here deliberately.** An earlier draft of this summary")
+    add("cited a statistic — that deals with more than two add-ons underperform")
+    add("standalone buyouts on IRR — which retrieval of the primary source falsified.")
+    add("It came from brokerage content, not research, and the peer-reviewed paper cited")
+    add("beside it reports the opposite. It has been removed. `RESEARCH_BENCHMARKS.md`")
+    add("section 3 documents the error and the provenance rule adopted in response: no")
+    add("practitioner-tier source may be load-bearing for a shipped verdict or a model")
+    add("input.")
     add("")
 
     # ---- Bridge
@@ -736,8 +910,9 @@ def render_ic_summary(
     add("   re-run scoring; hand-research the top 15 and call the top five.")
     add("2. Obtain audited or reviewed financials for a real anchor and rebuild the")
     add("   model from its actuals rather than blueprint parameters.")
-    add("3. Verify customer and municipality concentration, contract renewal dates, and")
-    add("   backlog against the blueprint's limits.")
+    add("3. Verify customer and municipality concentration against the **tightened**")
+    add("   screen (single customer <15%, top five <50%), not the blueprint's looser")
+    add("   20% / top-ten 55% limits. Confirm contract renewal dates and backlog.")
     add("4. Confirm technician roster, certifications, safety record, and wage exposure.")
     add("5. Underwrite synergies by named cost centre, owner, timing, and one-time cost")
     add("   rather than as a percentage of SG&A.")
@@ -770,6 +945,14 @@ def render_ic_summary(
     add("")
 
     add("## 12. Limitations")
+    add("")
+    add("`04_reference/assumption_benchmarks.csv` scores every material assumption")
+    add("against its published range. Two verdicts rest on `[C]` industry research and")
+    add("are load-bearing: the **interest rate sits below current market**, and opening")
+    add("leverage is genuinely conservative. The remainder rest on `[D]` brokerage")
+    add("material and are marked **indicative only** — they may inform a judgement but")
+    add("do not validate or condemn an input. `RESEARCH_BENCHMARKS.md` carries the")
+    add("citations, the source tiers, and the provenance rule governing their use.")
     add("")
     add("See `04_reference/limitations.md` for the full list, including the")
     add("known constraints on the downside case, the sensitivity grids, and the")
@@ -994,6 +1177,10 @@ def build_package(
             ("return_bridge.csv", "Entry equity to exit equity walk."),
             ("sensitivity_moic.csv", "MOIC across exit multiple and organic growth."),
             ("sensitivity_irr.csv", "IRR across exit multiple and organic growth."),
+            (
+                "sensitivity_add_on_entry.csv",
+                "Returns as a function of add-on entry multiple, against the cited 5x-6x range.",
+            ),
             ("return_summary.json", "Headline returns and capital structure."),
             ("assumptions.json", "Full assumption set and scenario provenance."),
         ):
@@ -1050,6 +1237,16 @@ def build_package(
         "reference",
         PROVENANCE["blueprint"],
         "Every base-case assumption with its source and basis.",
+    )
+
+    assumption_benchmark_table(SCENARIOS["base"]).to_csv(
+        reference_dir / "assumption_benchmarks.csv", index=False
+    )
+    record(
+        f"{REFERENCE_DIR}/assumption_benchmarks.csv",
+        "reference",
+        PROVENANCE["author"],
+        "Every material assumption against its published range, with a verdict.",
     )
 
     metric_definitions_table(t).to_csv(reference_dir / "kpi_definitions.csv", index=False)

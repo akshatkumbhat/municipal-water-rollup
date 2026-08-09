@@ -806,8 +806,13 @@ def clean_and_deduplicate(records: list[dict[str, Any]]) -> pd.DataFrame:
     ``merge_reason`` (which signals matched). Nothing is dropped silently.
     """
     cleaned: list[dict[str, Any]] = []
-    for raw in records:
+    for source_row, raw in enumerate(records):
         row: dict[str, Any] = dict(raw)
+        # Position in the caller's input list, carried through so a merge can be
+        # traced to the exact source rows it absorbed. `merged_from` records
+        # names, which collide: two records that normalize to the same name are
+        # indistinguishable in that field. Positions never collide.
+        row["source_row"] = source_row
         name = normalize_name(str(row.get("company_name", "")))
         if not 3 <= len(name) <= 120:
             continue
@@ -884,6 +889,9 @@ def clean_and_deduplicate(records: list[dict[str, Any]]) -> pd.DataFrame:
         rep_row["duplicate_count"] = len(members)
         rep_row["merged_from"] = "; ".join(absorbed)
         rep_row["merge_reason"] = ", ".join(sorted(root_reasons[root])) if len(members) > 1 else ""
+        rep_row["merged_source_rows"] = "; ".join(
+            str(cleaned[i]["source_row"]) for i in sorted(members, key=lambda i: cleaned[i]["source_row"])
+        )
         survivors.append((representative, rep_row))
 
     survivors.sort(key=lambda pair: pair[0])

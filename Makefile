@@ -1,4 +1,4 @@
-.PHONY: install install-dev test lint format model dashboard operating sourcing package verify smoke clean
+.PHONY: install install-dev test lint format model dashboard operating sourcing evaluate package verify smoke clean
 
 install:
 	python -m pip install -r requirements.txt
@@ -12,8 +12,8 @@ format:
 
 lint:
 	ruff check .
-	python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py operations_kpis.py candidate_package.py
-	mypy sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py sourcing_fixtures.py operations_kpis.py candidate_package.py
+	python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py operations_kpis.py candidate_package.py sourcing_evaluation.py
+	mypy sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py sourcing_fixtures.py operations_kpis.py candidate_package.py sourcing_evaluation.py
 
 test:
 	pytest
@@ -30,6 +30,9 @@ operating:
 sourcing:
 	python sourcing_pipeline.py --output outputs/targets.csv --min-targets 50
 
+evaluate:
+	python sourcing_evaluation.py --output-dir outputs/sourcing_evaluation
+
 package:
 	python candidate_package.py --output-dir outputs/candidate_package
 
@@ -40,4 +43,4 @@ smoke:
 	bash scripts/smoke_test.sh
 
 clean:
-	rm -rf .pytest_cache .ruff_cache __pycache__ tests/__pycache__ outputs/model outputs/operations outputs/candidate_package
+	rm -rf .pytest_cache .ruff_cache __pycache__ tests/__pycache__ outputs/model outputs/operations outputs/candidate_package outputs/sourcing_evaluation

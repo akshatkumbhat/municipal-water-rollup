@@ -220,3 +220,25 @@ def build_offline_dataset() -> tuple[list[dict[str, str]], dict[str, str], set[s
     records.append(variant_seven)
 
     return records, pages, blocked, errors
+
+
+# Ground truth for entity-resolution evaluation. The fixture generator creates
+# exactly two intentional duplicate pairs, so the correct clustering of the
+# emitted records is known by construction. `sourcing_evaluation` uses this as
+# the answer key to measure deduplication precision and recall rather than
+# asserting the merges are right.
+DUPLICATE_OF: dict[int, int] = {
+    PRIMARY_COUNT: 3,      # "Summit Regional Sewer Partners" duplicates company 3
+    PRIMARY_COUNT + 1: 7,  # uppercase "..., LLC" variant duplicates company 7
+}
+
+
+def ground_truth_clusters() -> dict[int, int]:
+    """Map each emitted record position to its true entity id.
+
+    Companies 0..PRIMARY_COUNT-1 are distinct entities. The two appended
+    variants resolve to companies 3 and 7 respectively.
+    """
+    truth = {i: i for i in range(PRIMARY_COUNT)}
+    truth.update(DUPLICATE_OF)
+    return truth

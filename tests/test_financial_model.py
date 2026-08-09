@@ -13,6 +13,7 @@ from buy_and_build_model import (
     AddOn,
     Assumptions,
     ModelResult,
+    add_on_entry_sensitivity,
     build_model,
     load_scenarios,
     return_bridge,
@@ -786,3 +787,55 @@ def test_three_leverage_points_are_reported_and_distinct() -> None:
     assert returns["peak_gross_leverage"] == returns["maximum_year_end_gross_leverage"]
     # Close leverage is higher than any year-end figure, which is the point.
     assert returns["gross_leverage_at_close"] > returns["maximum_year_end_gross_leverage"]
+
+
+# ---------------------------------------------------------------------------
+# Add-on entry-multiple sensitivity (research priority #6).
+# ---------------------------------------------------------------------------
+
+
+def test_add_on_entry_sensitivity_spans_the_cited_range() -> None:
+    table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, DEFAULT_ADDONS)
+    multiples = list(table["Add-on Entry Multiple"])
+
+    assert DEFAULT_ADDONS[0].entry_multiple in multiples, "modelled price must appear"
+    assert 5.0 in multiples and 6.0 in multiples, "cited 5x-6x range must be covered"
+    assert table["Within Cited Range"].any()
+    assert not table["Within Cited Range"].all(), "must show outside the range too"
+
+
+def test_paying_more_for_add_ons_lowers_returns_monotonically() -> None:
+    table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, DEFAULT_ADDONS)
+    moics = list(table["Gross MOIC"])
+    assert moics == sorted(moics, reverse=True)
+    assert list(table["Gross IRR"]) == sorted(table["Gross IRR"], reverse=True)
+
+
+def test_sensitivity_baseline_row_reconciles_to_the_base_case() -> None:
+    table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, DEFAULT_ADDONS)
+    first = table.iloc[0]
+    assert first["Add-on Entry Multiple"] == DEFAULT_ADDONS[0].entry_multiple
+    assert first["Gross MOIC"] == pytest.approx(build_model().returns["gross_moic"], rel=1e-9)
+    assert first["MOIC vs Modelled"] == pytest.approx(0.0, abs=TOL)
+
+
+def test_cost_of_paying_the_cited_range_is_quantified() -> None:
+    """The point of the table: how much of the return is cheap-add-on dependent."""
+    table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, DEFAULT_ADDONS)
+    in_range = table[table["Within Cited Range"]]
+    assert (in_range["MOIC vs Modelled"] < 0).all()
+    # Material but not fatal — the thesis survives paying market for tuck-ins.
+    assert in_range["MOIC vs Modelled"].min() > -1.5
+    assert (in_range["Gross MOIC"] > 3.0).all()
+
+
+def test_add_on_sensitivity_handles_a_no_add_on_scenario() -> None:
+    table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, ())
+    assert table.empty
+    assert "Add-on Entry Multiple" in table.columns
+
+
+def test_blended_entry_multiple_rises_with_add_on_price() -> None:
+    table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, DEFAULT_ADDONS)
+    blended = list(table["Blended Entry Multiple"])
+    assert blended == sorted(blended)

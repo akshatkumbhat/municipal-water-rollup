@@ -824,3 +824,97 @@ def test_integration_failure_isolates_the_add_on_driver() -> None:
     result = run_scenario(scenario).returns
     base = build_model().returns
     assert result["gross_moic"] < base["gross_moic"]
+
+
+# ---------------------------------------------------------------------------
+# Research-grounded content: sourced thesis, self-criticism, benchmark table.
+# ---------------------------------------------------------------------------
+
+
+def test_summary_cites_the_demand_gap_rather_than_asserting_it(ic_summary) -> None:
+    assert "$630.1 billion" in ic_summary
+    assert "73% increase" in ic_summary
+    assert "Clean Watersheds Needs Survey" in ic_summary
+    assert "RESEARCH_BENCHMARKS.md" in ic_summary
+
+
+def test_summary_states_the_verified_literature_finding(ic_summary) -> None:
+    """The peer-reviewed evidence supports buy-and-build; say so accurately."""
+    assert "outperform" in ic_summary
+    assert "3,399 buyouts" in ic_summary
+    assert "above-average equity returns" in ic_summary
+
+
+def test_summary_shifts_the_burden_to_entry_pricing(ic_summary) -> None:
+    """If the strategy is supported, the exposure is what was paid for it."""
+    assert "the exposure is not the strategy" in ic_summary.lower()
+    assert "0.41x to" in ic_summary
+    assert "sensitivity_add_on_entry.csv" in ic_summary
+    assert "not on a sourcing edge" in ic_summary
+
+
+def test_summary_names_the_residual_literature_risks(ic_summary) -> None:
+    assert "Late-entrant disadvantage" in ic_summary
+    assert "Limited attention" in ic_summary
+    assert "integration-failure" in ic_summary
+
+
+def test_summary_contains_no_falsified_add_on_statistic(ic_summary) -> None:
+    """Regression guard: this claim was shipped once and must never return."""
+    assert "19.9" not in ic_summary
+    assert "23.1" not in ic_summary
+
+
+def test_summary_records_the_correction_rather_than_hiding_it(ic_summary) -> None:
+    assert "A correction is recorded here deliberately" in ic_summary
+    assert "falsified" in ic_summary
+    assert "provenance rule" in ic_summary
+
+
+def test_benchmark_table_scores_every_material_assumption(package) -> None:
+    table = pd.read_csv(
+        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
+    )
+    assert len(table) >= 8
+    for column in ("Assumption", "Model value", "Published range", "Tier", "Verdict"):
+        assert column in table.columns
+    assert table["Comment"].str.len().gt(20).all()
+
+
+def test_benchmark_table_shows_aggression_and_conservatism_both(package) -> None:
+    """A table that only flattered the model would be worthless."""
+    table = pd.read_csv(
+        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
+    )
+    verdicts = " ".join(table["Verdict"])
+    assert "ABOVE" in verdicts, "must flag inputs above the evidence"
+    assert "BELOW range" in verdicts, "must flag inputs below the evidence"
+    assert "conservative" in verdicts, "must credit genuine conservatism"
+
+
+def test_practitioner_sourced_verdicts_are_marked_indicative(package) -> None:
+    """The provenance rule, enforced: [D] sources may not be load-bearing."""
+    table = pd.read_csv(
+        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
+    )
+    practitioner = table[table["Tier"].str.startswith("[D]")]
+    assert not practitioner.empty
+    assert practitioner["Verdict"].str.contains("indicative only").all()
+
+    load_bearing = table[table["Tier"] == "[C]"]
+    assert not load_bearing.empty
+    assert not load_bearing["Verdict"].str.contains("indicative").any()
+
+
+def test_benchmark_table_marks_unbenchmarked_inputs_honestly(package) -> None:
+    table = pd.read_csv(
+        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
+    )
+    unsourced = table[table["Tier"] == "none"]
+    assert not unsourced.empty
+    assert unsourced["Verdict"].eq("Unbenchmarked").all()
+
+
+def test_summary_points_at_the_benchmark_table(ic_summary) -> None:
+    assert "assumption_benchmarks.csv" in ic_summary
+    assert "below current market" in ic_summary

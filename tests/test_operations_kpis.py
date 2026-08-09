@@ -390,8 +390,26 @@ def test_zero_ebitda_month_does_not_crash_fcf_conversion(sample) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_healthy_aggregate_produces_no_exceptions(monthly) -> None:
-    assert exception_report(monthly).empty
+def test_aggregate_surfaces_exactly_the_benchmarked_shortfalls(monthly) -> None:
+    """After re-benchmarking, the platform has two real, sourced problems.
+
+    Utilization sits below the 75%-85% field-services band and municipal DSO
+    sits above the 60-90 day cycle target. Both are exactly what the blueprint's
+    100-day plan addresses, so a green dashboard would have been the suspicious
+    outcome, not this one.
+    """
+    exceptions = exception_report(monthly)
+    assert set(exceptions["Metric"]) == {"Billable utilization", "DSO (supporting)"}
+    assert exceptions["Action"].str.len().gt(0).all()
+
+
+def test_unbenchmarked_metrics_remain_on_track(monthly) -> None:
+    """The re-benchmark must not have quietly moved targets we cannot source."""
+    summary = kpi_summary(monthly)
+    unsourced = summary[summary["Key"].isin(
+        {"route_density", "gross_margin", "recurring_mix", "fcf_conversion"}
+    )]
+    assert (unsourced["Status"] == "On track").all()
 
 
 def test_weak_branch_produces_ranked_exceptions(sample) -> None:
@@ -672,11 +690,26 @@ def test_dimension_rollup_rejects_an_absent_dimension(sample) -> None:
 def test_metric_definitions_table_labels_provenance() -> None:
     table = metric_definitions_table()
     assert len(table) == len(METRIC_DEFINITIONS)
-    assert table["Target provenance"].eq(TARGET_PROVENANCE).all()
-    assert table["Target provenance"].str.contains("not externally benchmarked").all()
-    assert table["Target provenance"].str.contains("not an industry standard").all()
     assert table["Value provenance"].eq("Actual (operating data)").all()
     assert table["Definition"].str.len().gt(20).all()
+
+    # Every metric states a benchmark position — sourced or explicitly not.
+    assert table["Benchmark"].str.len().gt(20).all()
+    assert table["Benchmark tier"].str.match(r"^(\[[A-D]\]( indicative)?|none)$").all()
+
+    sourced = table[table["Benchmark tier"] != "none"]
+    unsourced = table[table["Benchmark tier"] == "none"]
+    assert not sourced.empty and not unsourced.empty, "both kinds must exist"
+    assert unsourced["Target provenance"].eq(TARGET_PROVENANCE).all()
+    assert unsourced["Benchmark"].str.contains("No published").all()
+
+    # A source existing is not the same as a source being strong enough to
+    # benchmark against: [D] material informs, [A]-[C] validates.
+    for _, row in sourced.iterrows():
+        if str(row["Benchmark tier"]).startswith("[D]"):
+            assert row["Target provenance"].startswith("Author-defined"), row["Metric"]
+        else:
+            assert "Benchmarked" in row["Target provenance"], row["Metric"]
 
 
 def test_write_operating_outputs_emits_every_table(tmp_path, sample) -> None:
@@ -782,8 +815,52 @@ def test_relative_gap_still_separates_high_from_medium(monthly) -> None:
 
 
 def test_target_provenance_is_disclosed_everywhere_targets_appear() -> None:
+    """No target may appear without saying whether evidence supports it."""
     table = metric_definitions_table()
-    assert table["Target provenance"].str.contains("not externally benchmarked").all()
-    assert table["Target provenance"].str.contains("not an industry standard").all()
-    assert "not externally benchmarked" in Thresholds.__doc__
+    for _, row in table.iterrows():
+        provenance = row["Target provenance"]
+        assert (
+            "Benchmarked" in provenance or "Author-defined" in provenance
+        ), f"{row['Metric']} states no provenance"
+        assert "not an industry standard" in provenance or "not a standard" in provenance
+    # Unsourced targets must still be called out in the Thresholds docstring.
     assert "not industry standards" in Thresholds.__doc__
+    assert "RESEARCH_BENCHMARKS.md" in Thresholds.__doc__
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [("utilization", 0.78), ("dso", 65.0), ("monthly_churn", 0.0134)],
+)
+def test_targets_hold_their_researched_values(field: str, expected: float) -> None:
+    """Guards the researched values against silent drift back to invented ones."""
+    assert getattr(Thresholds(), field) == pytest.approx(expected)
+
+
+def test_only_primary_tier_sources_may_claim_benchmarked_status() -> None:
+    """Provenance rule: a [D] source informs a target, it never validates one."""
+    table = metric_definitions_table()
+    for _, row in table.iterrows():
+        if str(row["Benchmark tier"]).startswith("[D]"):
+            assert row["Target provenance"].startswith("Author-defined"), row["Metric"]
+        elif row["Benchmark tier"] != "none":
+            assert row["Target provenance"].startswith("Benchmarked"), row["Metric"]
+
+    benchmarked = table[table["Target provenance"].str.startswith("Benchmarked")]
+    assert list(benchmarked["Metric"]) == ["Billable utilization"], (
+        "only the TSIA-backed utilization target survives the provenance rule"
+    )
+
+
+def test_utilization_benchmark_states_its_denominator() -> None:
+    """75%-85% is meaningless without saying billable over WHAT."""
+    metric = next(m for m in METRIC_DEFINITIONS if m.key == "utilization")
+    assert "PAID hours" in metric.benchmark
+    assert metric.denominator == "paid_hours"
+
+
+def test_sample_dso_reflects_municipal_payment_cycles(monthly) -> None:
+    """The sample must not assume better-than-municipal collections."""
+    trailing = monthly.sort_values("month").tail(12)["dso"]
+    assert trailing.mean() > 60, "municipal DSO runs 60+ days"
+    assert trailing.mean() < 95
