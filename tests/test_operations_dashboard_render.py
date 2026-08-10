@@ -8,6 +8,8 @@ the arithmetic is asserted in `test_operations_kpis.py`.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from operations_kpis import METRIC_DEFINITIONS
@@ -16,7 +18,11 @@ pytest.importorskip("streamlit")
 
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-APP = "operations_dashboard.py"
+# Absolute, derived from this file's own location. A relative path is resolved
+# by AppTest against the *calling* file's directory, so it silently depends on
+# where the suite is invoked from — which broke the moment the repository was
+# moved to a different parent directory.
+APP = str(pathlib.Path(__file__).resolve().parent.parent / "operations_dashboard.py")
 TIMEOUT = 240
 
 
