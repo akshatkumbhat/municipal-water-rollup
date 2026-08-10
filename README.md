@@ -1,6 +1,47 @@
 # Municipal Water & Wastewater Asset-Integrity Services Rollup
 
-An application-ready candidate project for a long-duration holding company. The package joins three workstreams that are often presented separately: proprietary sourcing, transaction underwriting, and post-close operating control.
+A private-equity buy-and-build case study joining three workstreams usually
+presented separately: proprietary sourcing, transaction underwriting, and
+post-close operating control. Built as a reproducible, offline, fully tested
+pipeline rather than a spreadsheet.
+
+> ### Read this first
+>
+> **Every company in this repository is synthetic.** The sourcing dataset is
+> generated on reserved `example.com` domains — no target here is a real
+> business, and no claim is made about any real company, market, or owner.
+> **All operating data is generated, not observed.** The financial model is
+> parameterised from `PROJECT_BLUEPRINT.md`, *not* derived from the candidate it
+> selects, because the sourcing data contains no revenue or EBITDA for anyone.
+>
+> This demonstrates a repeatable method. It is not diligence, not market
+> validation, and not evidence about any business. Assumptions are labelled by
+> provenance throughout — blueprint, modelled, fixture, synthetic, or
+> author-defined — and `RESEARCH_BENCHMARKS.md` records which are supported by
+> published evidence, which are merely indicative, and which are asserted.
+
+**What it does**
+
+- Sources and scores 50+ targets offline, with a measured deduplication
+  accuracy (precision/recall against known ground truth) rather than an assumed
+  one.
+- Underwrites a five-year platform-plus-add-on model where every reported line
+  reconciles to an identity the test suite checks, across base, downside, and
+  severe-downside scenarios.
+- Runs a COO dashboard over 60 months of operating data with seven governing
+  KPIs, exception thresholds, and stated data lineage.
+- Assembles all of it into one checksummed, byte-reproducible candidate package
+  via a single command.
+
+```bash
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+make package        # ~15 seconds, fully offline
+```
+
+Then read `outputs/candidate_package/IC_SUMMARY.md`.
+
+356 tests, no network access anywhere in the suite.
 
 ## Platform definition
 
