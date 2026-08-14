@@ -1050,8 +1050,9 @@ driver.
 make dashboard
 ```
 
-Default view: seven governing KPI cards, all on track, over 60 months of
-**synthetic** operating data. Say the word synthetic.
+Default view: seven KPI cards — the six governing metrics plus supporting DSO —
+all on track, over 60 months of **synthetic** operating data. Say the word
+synthetic.
 
 In the sidebar, set Regions to **Mountain West** only. Every card updates; four
 flip to "Management action" — route density, utilization, gross margin, and

@@ -28,8 +28,9 @@ pipeline rather than a spreadsheet.
 - Underwrites a five-year platform-plus-add-on model where every reported line
   reconciles to an identity the test suite checks, across base, downside, and
   severe-downside scenarios.
-- Runs a COO dashboard over 60 months of operating data with seven governing
-  KPIs, exception thresholds, and stated data lineage.
+- Runs a COO dashboard over 60 months of operating data with six governing
+  KPIs plus DSO as a supporting cash metric, exception thresholds, and stated
+  data lineage.
 - Assembles all of it into one checksummed, byte-reproducible candidate package
   via a single command.
 
@@ -41,7 +42,7 @@ make package        # ~15 seconds, fully offline
 
 Then read `outputs/candidate_package/IC_SUMMARY.md`.
 
-361 tests, no network access anywhere in the suite.
+366 tests, no network access anywhere in the suite.
 
 ## Platform definition
 
@@ -59,9 +60,12 @@ The strategy deliberately excludes ownership of regulated utilities, commodity-h
 ## Repository
 
 - `sourcing_pipeline.py` — public-directory scraping, cleaning, website enrichment, deduplication, and 0-100 lead scoring.
+- `sourcing_fixtures.py` — synthetic offline directory and company pages; the only data source the test suite touches.
+- `sourcing_evaluation.py` — measures deduplication precision/recall against known ground truth.
 - `buy_and_build_model.py` — five-year platform/add-on model, debt sweep, cash conversion, and gross return outputs.
 - `operations_kpis.py` — UI-free operating-data validation, KPI computation, exceptions, and modelled views.
 - `operations_dashboard.py` — thin Streamlit/Plotly COO cockpit over `operations_kpis`.
+- `candidate_package.py` — orchestration only; assembles every module's output into the checksummed deliverable.
 - `requirements.txt` — pinned dependency ranges.
 
 ## Installation
@@ -100,6 +104,9 @@ Then read `outputs/candidate_package/IC_SUMMARY.md` and follow
 | `make dashboard` | Launches the live COO dashboard |
 | `make smoke` | Regenerates everything, verifies checksums, runs the test suite |
 | `make model` / `make operating` / `make sourcing` | Individual components, unchanged |
+| `make evaluate` | Scores deduplication precision/recall against ground truth |
+| `make lint` / `make test` | `ruff check` + mypy; the test suite |
+| `make format` | Applies `ruff format`. `make lint` does **not** check formatting, so run this before committing |
 
 ### What the package contains
 

@@ -44,7 +44,8 @@ def test_app_renders_without_exceptions(app: AppTest) -> None:
     assert not app.exception, [str(e.value) for e in app.exception]
 
 
-def test_every_governing_kpi_has_a_card(app: AppTest) -> None:
+def test_every_metric_has_a_card(app: AppTest) -> None:
+    # Seven cards: the six GOVERNING_KEYS plus DSO, which is supporting only.
     labels = [m.label for m in app.metric]
     assert labels == [m.label for m in METRIC_DEFINITIONS]
     assert len(labels) == 7
