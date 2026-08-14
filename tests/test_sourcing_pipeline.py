@@ -11,8 +11,10 @@ import pytest
 
 from sourcing_fixtures import DIRECTORY_SOURCE, build_offline_dataset
 from sourcing_pipeline import (
+    CONTACT_ENV_VAR,
     EMPLOYEE_PATTERNS,
     FLEET_PATTERNS,
+    PLACEHOLDER_CONTACT,
     SERVICE_KEYWORDS,
     TECHNICIAN_PATTERNS,
     DirectorySource,
@@ -30,7 +32,60 @@ from sourcing_pipeline import (
     normalize_name,
     normalize_phone,
     scrape_source,
+    scraper_contact,
+    user_agent,
 )
+
+# --------------------------------------------------------------------------- #
+# Scraper identity
+# --------------------------------------------------------------------------- #
+
+
+def test_scraper_contact_falls_back_to_unroutable_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(CONTACT_ENV_VAR, raising=False)
+    assert scraper_contact() == PLACEHOLDER_CONTACT
+    # A reserved .invalid domain can never resolve, so an unconfigured run cannot
+    # point site operators at somebody else's mailbox.
+    assert PLACEHOLDER_CONTACT.endswith(".invalid")
+
+
+def test_scraper_contact_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(CONTACT_ENV_VAR, "  ops@example.org  ")
+    assert scraper_contact() == "ops@example.org"
+    assert user_agent() == "LongDurationHoldCoResearch/1.0 (+ops@example.org)"
+
+
+def test_blank_contact_env_is_treated_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(CONTACT_ENV_VAR, "   ")
+    assert scraper_contact() == PLACEHOLDER_CONTACT
+
+
+def test_build_session_warns_when_contact_is_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from sourcing_pipeline import build_session
+
+    monkeypatch.delenv(CONTACT_ENV_VAR, raising=False)
+    with caplog.at_level("WARNING", logger="water_rollup_sourcing"):
+        session = build_session()
+    assert CONTACT_ENV_VAR in caplog.text
+    assert session.headers["User-Agent"].endswith(f"(+{PLACEHOLDER_CONTACT})")
+
+
+def test_build_session_is_quiet_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from sourcing_pipeline import build_session
+
+    monkeypatch.setenv(CONTACT_ENV_VAR, "ops@example.org")
+    with caplog.at_level("WARNING", logger="water_rollup_sourcing"):
+        build_session()
+    assert CONTACT_ENV_VAR not in caplog.text
+
 
 # --------------------------------------------------------------------------- #
 # Normalization

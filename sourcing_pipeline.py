@@ -24,6 +24,7 @@ import argparse
 import concurrent.futures as futures
 import json
 import logging
+import os
 import re
 import time
 import urllib.robotparser
@@ -42,7 +43,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 LOGGER = logging.getLogger("water_rollup_sourcing")
-USER_AGENT = "LongDurationHoldCoResearch/1.0 (+compliance-contact@example.com)"
+CONTACT_ENV_VAR = "COPPERLINE_SCRAPER_CONTACT"
+PLACEHOLDER_CONTACT = "compliance-contact@example.invalid"
 REQUEST_TIMEOUT = 20
 MAX_SITE_TEXT_CHARS = 250_000
 
@@ -145,7 +147,30 @@ DEFAULT_SOURCES = (
 )
 
 
+def scraper_contact() -> str:
+    """Contact address advertised to the sites this pipeline visits.
+
+    Site operators use it to reach whoever is running the crawler, so it must be
+    a monitored address. It is read from the environment rather than hardcoded;
+    the placeholder resolves to a reserved `.invalid` domain that cannot receive
+    mail, and using it is a configuration error rather than a silent default.
+    """
+    return os.environ.get(CONTACT_ENV_VAR, "").strip() or PLACEHOLDER_CONTACT
+
+
+def user_agent() -> str:
+    return f"LongDurationHoldCoResearch/1.0 (+{scraper_contact()})"
+
+
 def build_session() -> requests.Session:
+    if scraper_contact() == PLACEHOLDER_CONTACT:
+        LOGGER.warning(
+            "No scraper contact configured: requests will advertise %s, which cannot "
+            "receive mail. Set %s to a monitored address before visiting any site you "
+            "do not control. Offline paths (--offline-demo, fixtures) do not need this.",
+            PLACEHOLDER_CONTACT,
+            CONTACT_ENV_VAR,
+        )
     retry = Retry(
         total=4,
         connect=4,
@@ -158,7 +183,7 @@ def build_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(
         {
-            "User-Agent": USER_AGENT,
+            "User-Agent": user_agent(),
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.8",
         }
@@ -275,7 +300,7 @@ def robots_allows(session: requests.Session, url: str) -> bool:
         parser = urllib.robotparser.RobotFileParser()
         parser.set_url(robots_url)
         parser.parse(response.text.splitlines())
-        return parser.can_fetch(USER_AGENT, url)
+        return parser.can_fetch(user_agent(), url)
     except requests.RequestException as exc:
         LOGGER.warning("robots.txt check failed for %s: %s; skipping for safety", url, exc)
         return False

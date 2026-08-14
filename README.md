@@ -193,7 +193,15 @@ python sourcing_pipeline.py \
   --min-targets 50
 ```
 
-The script respects robots.txt and does not bypass authentication, CAPTCHAs, rate limits, or access controls. Review source terms before commercial use. Replace the example User-Agent contact address before deployment.
+The script respects robots.txt and does not bypass authentication, CAPTCHAs, rate limits, or access controls. Review source terms before commercial use.
+
+Live scraping advertises a contact address so site operators can reach you. Set it before running against any site you do not control:
+
+```bash
+export COPPERLINE_SCRAPER_CONTACT="you@yourdomain.com"
+```
+
+Left unset, the User-Agent falls back to a reserved `.invalid` address that cannot receive mail, and `build_session()` logs a warning. The offline paths below need no contact and emit no warning.
 
 ### Offline demo (no network)
 
@@ -477,8 +485,8 @@ This repository includes a Claude Code operating layer:
 
 - `CLAUDE.md` — persistent project rules and financial/data guardrails.
 - `BACKLOG.md` — phase gates and acceptance criteria.
-- `VIBE_CODING_PLAYBOOK.md` — exact session workflow.
-- `prompts/` — bounded phase prompts.
+- `METHODOLOGY.md` — how this repository was built, phase by phase.
+- `prompts/` — bounded phase specifications with acceptance criteria.
 - `.claude/skills/` — `/implement-phase` and `/ic-review`.
 - `.claude/agents/` — independent data-engineering, underwriting, and COO reviewers.
 
@@ -488,7 +496,7 @@ Start conservatively:
 claude --permission-mode plan
 ```
 
-Then paste `BOOTSTRAP_PROMPT.txt`. After approving the Phase 1 plan, run phases one at a time using:
+Then paste the audit prompt from [`METHODOLOGY.md`](METHODOLOGY.md) §2. After approving the Phase 1 plan, run phases one at a time using:
 
 ```text
 /implement-phase prompts/01_engineering_foundation.md

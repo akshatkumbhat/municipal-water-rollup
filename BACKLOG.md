@@ -289,13 +289,14 @@ here rather than silently closed.
 
 **Low severity — accepted, not scheduled**
 
-4. **Repository-wide formatting drift.** `ruff format --check` reports 11 files.
-   This predates Phase 6, is unchanged by it, and is not an enforced gate
-   (`make lint` runs `ruff check`, not `ruff format`). Prior-phase files were
-   deliberately not reformatted for style.
-5. **Placeholder user-agent contact.** `sourcing_pipeline.USER_AGENT` carries
-   `compliance-contact@example.com`. The README already instructs replacing it
-   before any live scraping; the code does not warn. Left as documentation.
+4. **Repository-wide formatting drift.** `ruff format --check` reports 13 files
+   (11 at Phase 6; the count drifted with later commits). This is not an
+   enforced gate (`make lint` runs `ruff check`, not `ruff format`).
+   Prior-phase files were deliberately not reformatted for style.
+5. ~~**Placeholder user-agent contact.**~~ RESOLVED at publication. The contact
+   now reads from `COPPERLINE_SCRAPER_CONTACT`; unset, it falls back to a
+   reserved `.invalid` address that cannot receive mail, and `build_session()`
+   logs a warning. Offline paths are unaffected.
 6. **Historical Phase 0 audit.** `AUDIT_PHASE0.md` cites the pre-Phase-3 flat
    output layout. It is a dated point-in-time audit record, not current
    documentation, and is intentionally left unedited.
