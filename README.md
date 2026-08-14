@@ -42,7 +42,8 @@ make package        # ~15 seconds, fully offline
 
 Then read `outputs/candidate_package/IC_SUMMARY.md`.
 
-366 tests, no network access anywhere in the suite.
+No network access anywhere in the suite — `tests/conftest.py` fails any test that
+attempts a live request.
 
 ## Platform definition
 
@@ -105,8 +106,8 @@ Then read `outputs/candidate_package/IC_SUMMARY.md` and follow
 | `make smoke` | Regenerates everything, verifies checksums, runs the test suite |
 | `make model` / `make operating` / `make sourcing` | Individual components, unchanged |
 | `make evaluate` | Scores deduplication precision/recall against ground truth |
-| `make lint` / `make test` | `ruff check` + mypy; the test suite |
-| `make format` | Applies `ruff format`. `make lint` does **not** check formatting, so run this before committing |
+| `make lint` / `make test` | `ruff check`, `ruff format --check`, py_compile, mypy; the test suite |
+| `make format` | Applies `ruff format` and `ruff check --fix`. Run it if `make lint` reports formatting drift |
 
 ### What the package contains
 

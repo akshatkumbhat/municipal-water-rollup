@@ -1,10 +1,15 @@
 """Turns hand-maintained documentation claims into enforced invariants.
 
-The README states counts and lists that nothing checked: the test count drifted
-twice, the module list omitted three files, and the KPI count contradicted both
-`GOVERNING_KEYS` and the README's own later section. Each test here fails when a
-documented claim stops matching the code, so the drift surfaces in CI rather
-than in front of a reader.
+The README states counts and lists that nothing checked: the module list omitted
+three files, and the KPI count contradicted both `GOVERNING_KEYS` and the
+README's own later section. Each test here fails when a documented claim stops
+matching the code, so the drift surfaces in CI rather than in front of a reader.
+
+Only claims a reader acts on are asserted here. A precise test count is
+deliberately not one of them: it changes on every commit that touches tests and
+tells a reader nothing that "no network access anywhere in the suite" does not
+already tell them, so asserting it would tax every future change to protect a
+fact with no informational value.
 """
 
 from __future__ import annotations
@@ -12,12 +17,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import pytest
-
 from operations_kpis import GOVERNING_KEYS, METRIC_DEFINITIONS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TESTS_DIR = Path(__file__).resolve().parent
 README = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 MAKEFILE = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
@@ -35,27 +37,10 @@ _NUMBER_WORDS = {
 }
 
 
-def _running_whole_suite(config: pytest.Config) -> bool:
-    """True only when the session collected the entire suite.
-
-    A filtered run (`-k`, `-m`, or a single node id) collects fewer items, so
-    comparing the README count against it would fail for the wrong reason.
-    """
-    if config.getoption("keyword") or config.getoption("markexpr"):
-        return False
-    targets = [Path(arg.split("::")[0]).resolve() for arg in config.args if not arg.startswith("-")]
-    if not targets:
-        return True  # bare `pytest` from the repo root
-    return all(target in (TESTS_DIR, REPO_ROOT) for target in targets)
-
-
-def test_readme_test_count_matches_the_suite(request: pytest.FixtureRequest) -> None:
-    if not _running_whole_suite(request.config):
-        pytest.skip("test count is only meaningful for a full-suite run")
-
-    match = re.search(r"^(\d+) tests, no network access", README, re.MULTILINE)
-    assert match, "README no longer states a test count in the expected form"
-    assert int(match.group(1)) == request.session.testscollected
+def test_readme_states_the_suite_is_hermetic() -> None:
+    # The load-bearing claim about the suite is that it never touches the
+    # network, which conftest.py enforces for real. Assert the claim is present.
+    assert "no network access anywhere in the suite" in README.lower()
 
 
 def test_readme_governing_kpi_count_matches_the_module() -> None:

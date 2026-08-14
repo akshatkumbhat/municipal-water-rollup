@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Lint, type-check, and check formatting
+        run: make lint
+
+      # Regenerates every artifact, re-verifies the SHA-256 manifest, and runs
+      # the suite. This is what catches a deliverable drifting from the code
+      # that produces it — the package text is generated, so a stale claim in
+      # candidate_package.py surfaces here rather than in front of a reader.
+      - name: Smoke test (regenerate package, verify checksums, run suite)
+        run: make smoke
+
+      - name: Confirm the working tree is clean after a full regeneration
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Regenerating the package modified tracked files:"
+            git status --porcelain
+            git diff
+            exit 1
+          fi

@@ -12,6 +12,7 @@ format:
 
 lint:
 	ruff check .
+	ruff format --check .
 	python -m py_compile sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py operations_kpis.py candidate_package.py sourcing_evaluation.py
 	mypy sourcing_pipeline.py buy_and_build_model.py operations_dashboard.py sourcing_fixtures.py operations_kpis.py candidate_package.py sourcing_evaluation.py
 
