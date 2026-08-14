@@ -237,9 +237,7 @@ def test_lead_score_validation_reports_precision_base_rate_and_lift() -> None:
     assert validation.k == 15
     assert 0.0 <= validation.precision_at_k <= 1.0
     assert 0.0 <= validation.base_rate <= 1.0
-    assert validation.lift == pytest.approx(
-        validation.precision_at_k / validation.base_rate
-    )
+    assert validation.lift == pytest.approx(validation.precision_at_k / validation.base_rate)
     assert validation.fit_in_top_k <= validation.k
     assert validation.fit_in_universe <= validation.universe
 

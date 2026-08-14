@@ -260,9 +260,7 @@ def select_candidate(targets: pd.DataFrame) -> CandidateSelection:
             "no tiebreak was required."
         )
 
-    return CandidateSelection(
-        candidate=candidate, tied=ranked, rule=rule, rationale=rationale
-    )
+    return CandidateSelection(candidate=candidate, tied=ranked, rule=rule, rationale=rationale)
 
 
 def sourcing_funnel(targets: pd.DataFrame, selection: CandidateSelection) -> pd.DataFrame:
@@ -333,11 +331,21 @@ def assumption_provenance_table(scenario: Scenario) -> pd.DataFrame:
         ("Platform entry multiple (x)", a.platform_entry_multiple, blueprint, "6.0x EBITDA"),
         ("Opening leverage (x EBITDA)", a.initial_debt_to_ebitda, blueprint, "3.0x, or $6.0M"),
         ("Organic growth", a.annual_organic_growth, blueprint, "5.0% annually"),
-        ("Margin expansion (bps/yr)", a.platform_margin_expansion_bps_per_year, blueprint, "50 bps"),
+        (
+            "Margin expansion (bps/yr)",
+            a.platform_margin_expansion_bps_per_year,
+            blueprint,
+            "50 bps",
+        ),
         ("Margin cap", a.platform_margin_cap, blueprint, "22.0%"),
         ("Add-on SG&A % revenue", a.add_on_sgna_pct_revenue, blueprint, "20% of revenue"),
         ("SG&A synergy capture", a.sgna_synergy_capture, blueprint, "15% consolidation"),
-        ("First-year synergy realization", a.first_year_synergy_realization, blueprint, "50% in year one"),
+        (
+            "First-year synergy realization",
+            a.first_year_synergy_realization,
+            blueprint,
+            "50% in year one",
+        ),
         ("Interest rate", a.interest_rate, blueprint, "8.0%"),
         ("Tax rate", a.tax_rate, blueprint, "25% cash taxes"),
         ("Maintenance capex % revenue", a.capex_pct_revenue, blueprint, "3.0%"),
@@ -622,14 +630,28 @@ def render_ic_summary(
     add("")
     add("| Item | Value | Source |")
     add("|---|---:|---|")
-    add(f"| Platform enterprise value | {_money(br['platform_enterprise_value'])} | `02_model/base/sources_and_uses.csv` |")
-    add(f"| Transaction fees (platform) | {_money(br['platform_transaction_fees'])} | `02_model/base/sources_and_uses.csv` |")
+    add(
+        f"| Platform enterprise value | {_money(br['platform_enterprise_value'])} | `02_model/base/sources_and_uses.csv` |"
+    )
+    add(
+        f"| Transaction fees (platform) | {_money(br['platform_transaction_fees'])} | `02_model/base/sources_and_uses.csv` |"
+    )
     add(f"| Opening debt | {_money(br['initial_debt'])} | `02_model/base/return_summary.json` |")
-    add(f"| Initial sponsor equity | {_money(br['initial_sponsor_equity'])} | `02_model/base/return_summary.json` |")
-    add(f"| Add-on enterprise value (3 tuck-ins) | {_money(br['total_add_on_enterprise_value'])} | `02_model/base/sources_and_uses.csv` |")
-    add(f"| Total uses across all closings | {_money(float(su_total['Total Uses']))} | `02_model/base/sources_and_uses.csv` |")
-    add(f"| Total sponsor equity invested | {_money(br['total_sponsor_equity_invested'])} | `02_model/base/return_summary.json` |")
-    add(f"| Blended entry multiple | {_turns(br['blended_entry_multiple'])} | `02_model/base/return_summary.json` |")
+    add(
+        f"| Initial sponsor equity | {_money(br['initial_sponsor_equity'])} | `02_model/base/return_summary.json` |"
+    )
+    add(
+        f"| Add-on enterprise value (3 tuck-ins) | {_money(br['total_add_on_enterprise_value'])} | `02_model/base/sources_and_uses.csv` |"
+    )
+    add(
+        f"| Total uses across all closings | {_money(float(su_total['Total Uses']))} | `02_model/base/sources_and_uses.csv` |"
+    )
+    add(
+        f"| Total sponsor equity invested | {_money(br['total_sponsor_equity_invested'])} | `02_model/base/return_summary.json` |"
+    )
+    add(
+        f"| Blended entry multiple | {_turns(br['blended_entry_multiple'])} | `02_model/base/return_summary.json` |"
+    )
     add("")
     add("Sources equal uses at every closing by construction; the reconciliation is")
     add("asserted in `tests/test_financial_model.py`.")
@@ -728,8 +750,10 @@ def render_ic_summary(
         target = _by_unit(float(row["Target"]), unit)
         add(f"| {row['Metric']} | {current} | {target} | {row['Status']} |")
     add("")
-    add(f"Targets are `author` inputs and are **not externally benchmarked**. "
-        f"Open management exceptions at the aggregate level: {len(operating_exceptions)}.")
+    add(
+        f"Targets are `author` inputs and are **not externally benchmarked**. "
+        f"Open management exceptions at the aggregate level: {len(operating_exceptions)}."
+    )
     add("")
     add("Filtering to the weakest branch surfaces route density, utilization, gross")
     add("margin, and churn exceptions with a named operating action for each — the")
@@ -739,7 +763,9 @@ def render_ic_summary(
     # ---- Returns
     add("## 5. Returns  `modelled`")
     add("")
-    add("| Scenario | MOIC | Gross IRR | Exit equity | Terminal debt | Close lev. | Max year-end lev. | Limit exceeded |")
+    add(
+        "| Scenario | MOIC | Gross IRR | Exit equity | Terminal debt | Close lev. | Max year-end lev. | Limit exceeded |"
+    )
     add("|---|---:|---:|---:|---:|---:|---:|---|")
     for name in SCENARIO_ORDER:
         r = results[name].returns
@@ -827,8 +853,12 @@ def render_ic_summary(
     add("")
     add("| Point | Value | Field |")
     add("|---|---:|---|")
-    add(f"| At the platform closing | {_turns(br['gross_leverage_at_close'])} | `gross_leverage_at_close` |")
-    add(f"| Maximum reported year-end | {_turns(br['maximum_year_end_gross_leverage'])} | `maximum_year_end_gross_leverage` (alias `peak_gross_leverage`) |")
+    add(
+        f"| At the platform closing | {_turns(br['gross_leverage_at_close'])} | `gross_leverage_at_close` |"
+    )
+    add(
+        f"| Maximum reported year-end | {_turns(br['maximum_year_end_gross_leverage'])} | `maximum_year_end_gross_leverage` (alias `peak_gross_leverage`) |"
+    )
     add(f"| Exit (net of cash) | {_turns(br['exit_net_leverage'])} | `exit_net_leverage` |")
     add("")
     add(f"Terminal debt is {_money(br['terminal_debt'])}. Note that `peak_gross_leverage`")
@@ -836,11 +866,15 @@ def render_ic_summary(
     add("closing position, which is the higher of the two.")
     add("")
     add("All positive levered free cash flow sweeps to debt. Add-on financing is capped")
-    add(f"at a {_turns(br['leverage_limit'])} pro-forma leverage governor (`author`), with any excess")
+    add(
+        f"at a {_turns(br['leverage_limit'])} pro-forma leverage governor (`author`), with any excess"
+    )
     add("funded by sponsor equity; the governor is inert in the base case, so no equity")
     add("is staged. Capacity is sized on delivered **operating** EBITDA plus only")
-    add(f"{_pct(SCENARIOS['base'].assumptions.leverage_synergy_addback_fraction)} of realized synergies "
-        "(`leverage_synergy_addback_fraction`, `author`,")
+    add(
+        f"{_pct(SCENARIOS['base'].assumptions.leverage_synergy_addback_fraction)} of realized synergies "
+        "(`leverage_synergy_addback_fraction`, `author`,"
+    )
     add("default 0.0). That is a modelling input, **not a covenant term**: actual lender")
     add("credit for synergies depends on documentation, caps, timing, and realization")
     add("requirements. Detail in `03_operating/capital_structure.csv`.")
@@ -849,11 +883,15 @@ def render_ic_summary(
         years = ", ".join(str(y) for y in br["leverage_limit_exceeded_years"])
         add("> **Leverage-limit warning.** Year-end gross leverage exceeds the modelled")
         add(f"> {_turns(br['leverage_limit'])} governor in year(s) {years}, reaching")
-        add(f"> {_turns(br['maximum_year_end_gross_leverage'])}. This is a model-limit warning, not a")
+        add(
+            f"> {_turns(br['maximum_year_end_gross_leverage'])}. This is a model-limit warning, not a"
+        )
         add("> covenant breach — no covenant is modelled in this repository.")
     else:
-        add(f"No year exceeds the modelled {_turns(br['leverage_limit'])} governor "
-            "(`leverage_limit_exceeded`: false).")
+        add(
+            f"No year exceeds the modelled {_turns(br['leverage_limit'])} governor "
+            "(`leverage_limit_exceeded`: false)."
+        )
     add("")
     add("Note the blueprint's claim that add-on financing keeps pro-forma leverage below")
     add("2.5x holds **post-close**; leverage at the platform closing is 3.0x by design.")
@@ -876,7 +914,9 @@ def render_ic_summary(
     add("> committee attention should focus on what is *not* varied here.")
     add("")
     ur = upside.returns
-    add(f"The upside case ({_turns(ur['gross_moic'])} / {_pct(ur['gross_irr'])}) is `author`-defined and")
+    add(
+        f"The upside case ({_turns(ur['gross_moic'])} / {_pct(ur['gross_irr'])}) is `author`-defined and"
+    )
     add("deliberately operational only: it holds the exit mark at the base-case 6.5x")
     add("rather than assuming a re-rating.")
     add("")
@@ -1267,7 +1307,9 @@ def build_package(
 
     # ---- 5. Narrative
     (output_dir / IC_SUMMARY_NAME).write_text(
-        render_ic_summary(results, selection, operating_summary, operating_exceptions, resolved_as_of),
+        render_ic_summary(
+            results, selection, operating_summary, operating_exceptions, resolved_as_of
+        ),
         encoding="utf-8",
     )
     record(
@@ -1326,8 +1368,7 @@ def _collect_artifacts(
     missing_description = [path for path in found if path not in described]
     if missing_description:
         raise PackageError(
-            "Generated files are missing a manifest description: "
-            f"{', '.join(missing_description)}"
+            f"Generated files are missing a manifest description: {', '.join(missing_description)}"
         )
     not_generated = [path for path in described if path not in found]
     if not_generated:
@@ -1464,7 +1505,9 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  artifacts        : {len(package.artifacts)}")
     print(f"  as of            : {package.as_of} (isolated volatile field)")
     print(f"  candidate        : {package.selection.name}")
-    print(f"  selection        : {'AMBIGUOUS — tiebreak applied' if package.selection.is_ambiguous else 'unambiguous'}")
+    print(
+        f"  selection        : {'AMBIGUOUS — tiebreak applied' if package.selection.is_ambiguous else 'unambiguous'}"
+    )
     if package.selection.is_ambiguous:
         print(f"  tied at top score: {len(package.selection.tied)}")
     print(f"  base MOIC / IRR  : {base['gross_moic']:.2f}x / {base['gross_irr']:.1%}")

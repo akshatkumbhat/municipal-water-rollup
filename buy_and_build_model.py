@@ -256,17 +256,15 @@ def solve_year_cash(
     r = a.interest_rate
     t = a.tax_rate
 
-    free_cash_flow = (
-        (1 - t) * (a_ebitda_less_capex - r * opening_debt) - nwc_investment
-    ) / (1 - 0.5 * r * (1 - t))
+    free_cash_flow = ((1 - t) * (a_ebitda_less_capex - r * opening_debt) - nwc_investment) / (
+        1 - 0.5 * r * (1 - t)
+    )
     cash_interest = r * (opening_debt - 0.5 * free_cash_flow)
     cash_taxes = t * (a_ebitda_less_capex - cash_interest)
 
     if cash_taxes < 0:
         # Interest shields the full tax base; re-solve with no cash taxes.
-        free_cash_flow = (a_ebitda_less_capex - nwc_investment - r * opening_debt) / (
-            1 - 0.5 * r
-        )
+        free_cash_flow = (a_ebitda_less_capex - nwc_investment - r * opening_debt) / (1 - 0.5 * r)
         cash_interest = r * (opening_debt - 0.5 * free_cash_flow)
         cash_taxes = 0.0
 
@@ -351,8 +349,7 @@ def build_model(
     for year in range(1, a.forecast_years + 1):
         platform_revenue = a.platform_revenue * (1 + a.annual_organic_growth) ** year
         platform_margin = min(
-            a.platform_ebitda_margin
-            + (a.platform_margin_expansion_bps_per_year / 10_000) * year,
+            a.platform_ebitda_margin + (a.platform_margin_expansion_bps_per_year / 10_000) * year,
             a.platform_margin_cap,
         )
         platform_ebitda = platform_revenue * platform_margin
@@ -369,9 +366,7 @@ def build_model(
                 revenue = add_on.revenue_at_close * (1 + a.annual_organic_growth) ** years_owned
                 add_on_revenue += revenue
                 add_on_ebitda_pre_synergy += revenue * add_on.ebitda_margin
-                realization = (
-                    a.first_year_synergy_realization if year == add_on.close_year else 1.0
-                )
+                realization = a.first_year_synergy_realization if year == add_on.close_year else 1.0
                 realized_synergies += revenue * full_synergy_pct_revenue * realization
 
             if year == add_on.close_year:
@@ -458,9 +453,7 @@ def build_model(
                 "Gross Leverage": ending_debt / ebitda,
                 "Net Leverage": (ending_debt - ending_cash) / ebitda,
                 "Creditable EBITDA": creditable_ebitda,
-                "Leverage Limit Exceeded": bool(
-                    ending_debt / ebitda > a.max_pro_forma_leverage
-                ),
+                "Leverage Limit Exceeded": bool(ending_debt / ebitda > a.max_pro_forma_leverage),
             }
         )
         ending_debt_prior = ending_debt
@@ -754,18 +747,14 @@ def _blueprint_scenarios() -> dict[str, Scenario]:
     return {
         "base": Scenario(
             name="base",
-            description=(
-                "5% organic growth, 15% SG&A synergy capture, 8% interest, 6.5x mark."
-            ),
+            description=("5% organic growth, 15% SG&A synergy capture, 8% interest, 6.5x mark."),
             source="PROJECT_BLUEPRINT.md — Operating assumptions",
             assumptions=DEFAULT_ASSUMPTIONS,
             add_ons=DEFAULT_ADDONS,
         ),
         "downside": Scenario(
             name="downside",
-            description=(
-                "3% organic growth, half synergy capture (7.5%), 9% interest, 6.0x mark."
-            ),
+            description=("3% organic growth, half synergy capture (7.5%), 9% interest, 6.0x mark."),
             source="PROJECT_BLUEPRINT.md — IC guardrails",
             assumptions=replace(
                 DEFAULT_ASSUMPTIONS,
@@ -1059,9 +1048,7 @@ def main() -> None:
         display = comparison.copy()
         display["Gross MOIC"] = display["Gross MOIC"].map(lambda x: f"{x:.2f}x")
         display["Gross IRR"] = display["Gross IRR"].map(lambda x: f"{x:.1%}")
-        display["Peak Gross Leverage"] = display["Peak Gross Leverage"].map(
-            lambda x: f"{x:.2f}x"
-        )
+        display["Peak Gross Leverage"] = display["Peak Gross Leverage"].map(lambda x: f"{x:.2f}x")
         print(display.to_string(index=False, float_format=lambda x: f"{x:,.2f}"))
     print(f"\nOutputs written to {output_dir}/")
 

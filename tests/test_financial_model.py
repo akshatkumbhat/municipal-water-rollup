@@ -169,9 +169,7 @@ def test_return_bridge_reconciles(scenario_name: str) -> None:
 
     walk = bridge[bridge["Component"] != "Exit equity value"]["Value"].sum()
     assert walk == pytest.approx(result.returns["terminal_equity_value"], abs=TOL)
-    assert bridge.iloc[-1]["Cumulative"] == pytest.approx(
-        bridge.iloc[-1]["Value"], abs=TOL
-    )
+    assert bridge.iloc[-1]["Cumulative"] == pytest.approx(bridge.iloc[-1]["Value"], abs=TOL)
 
 
 def test_return_bridge_separates_the_three_required_drivers() -> None:
@@ -239,13 +237,11 @@ def test_leverage_governor_funds_the_overflow_with_equity() -> None:
 
     year_two = result.schedule.iloc[1]
     assert year_two["Sponsor Equity Funded"] > 0
-    opening_debt = (
-        year_two["Ending Debt"] + year_two["Debt Paydown"] - year_two["Revolver Draw"]
-    )
+    opening_debt = year_two["Ending Debt"] + year_two["Debt Paydown"] - year_two["Revolver Draw"]
     assert opening_debt / year_two["EBITDA"] <= a.max_pro_forma_leverage + TOL
-    assert result.returns["total_sponsor_equity_invested"] > result.returns[
-        "initial_sponsor_equity"
-    ]
+    assert (
+        result.returns["total_sponsor_equity_invested"] > result.returns["initial_sponsor_equity"]
+    )
 
 
 def test_leverage_stress_still_reconciles_and_stays_solvent() -> None:
@@ -361,9 +357,7 @@ def test_full_first_year_synergy_realization_is_accepted() -> None:
     # Year 2 is Add-on A's close year: synergies now run at the full rate.
     acquisition_year = result.schedule.iloc[1]
     add_on = DEFAULT_ADDONS[0]
-    expected = (
-        add_on.revenue_at_close * a.add_on_sgna_pct_revenue * a.sgna_synergy_capture
-    )
+    expected = add_on.revenue_at_close * a.add_on_sgna_pct_revenue * a.sgna_synergy_capture
     assert acquisition_year["Realized Synergies"] == pytest.approx(expected, abs=TOL)
 
     # And strictly more than the base case's 50% first-year phase-in.
@@ -770,8 +764,12 @@ def test_severe_stress_raises_a_visible_leverage_limit_warning() -> None:
 
 def test_leverage_limit_years_match_the_schedule() -> None:
     stressed = build_model(
-        replace(DEFAULT_ASSUMPTIONS, initial_debt_to_ebitda=3.9, max_pro_forma_leverage=4.0,
-                interest_rate=0.60)
+        replace(
+            DEFAULT_ASSUMPTIONS,
+            initial_debt_to_ebitda=3.9,
+            max_pro_forma_leverage=4.0,
+            interest_rate=0.60,
+        )
     )
     schedule = stressed.schedule
     expected = [int(r["Year"]) for _, r in schedule.iterrows() if r["Leverage Limit Exceeded"]]

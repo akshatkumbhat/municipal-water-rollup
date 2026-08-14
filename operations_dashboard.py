@@ -47,6 +47,7 @@ st.set_page_config(
     layout="wide",
 )
 
+
 @st.cache_data(show_spinner=False)
 def _sample_data(scenario_name: str) -> pd.DataFrame:
     return validate_operating_data(generate_sample_data(scenario_name=scenario_name))
@@ -316,7 +317,9 @@ def main() -> None:
                     title="Year-over-year growth (actual)",
                 )
                 figure.update_layout(
-                    yaxis_tickformat=".0%", yaxis_title="YoY growth", xaxis_title="Month",
+                    yaxis_tickformat=".0%",
+                    yaxis_title="YoY growth",
+                    xaxis_title="Month",
                     legend_title_text="",
                 )
                 st.plotly_chart(figure, width="stretch")
@@ -368,9 +371,7 @@ def main() -> None:
                 text_auto=".1%",
                 title="Gross margin by service line (actual)",
             )
-            figure.update_layout(
-                xaxis_tickformat=".0%", xaxis_title="Gross margin", yaxis_title=""
-            )
+            figure.update_layout(xaxis_tickformat=".0%", xaxis_title="Gross margin", yaxis_title="")
             st.plotly_chart(figure, width="stretch")
         with right:
             region = dimension_rollup(filtered, "region")
@@ -436,7 +437,9 @@ def main() -> None:
                     title="Margin and utilization by business unit (actual)",
                 )
                 figure.update_layout(
-                    yaxis_tickformat=".0%", yaxis_title="Rate", xaxis_title="",
+                    yaxis_tickformat=".0%",
+                    yaxis_title="Rate",
+                    xaxis_title="",
                     legend_title_text="",
                 )
                 st.plotly_chart(figure, width="stretch")

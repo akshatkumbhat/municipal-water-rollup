@@ -53,9 +53,7 @@ def test_total_score_is_bounded_and_reconciles() -> None:
     )
     scored = apply_scoring(frame).iloc[0]
     component_sum = (
-        scored["age_score"]
-        + scored["workforce_score"]
-        + scored["digital_whitespace_score"]
+        scored["age_score"] + scored["workforce_score"] + scored["digital_whitespace_score"]
     )
     assert scored["priority_score"] == pytest.approx(component_sum, abs=0.05)
     assert 0 <= scored["priority_score"] <= 100

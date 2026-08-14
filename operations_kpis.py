@@ -389,8 +389,7 @@ def validate_operating_data(frame: pd.DataFrame) -> pd.DataFrame:
         )
     if missing:
         raise ValueError(
-            "Operating data is missing required column(s): "
-            f"{', '.join(sorted(missing))}."
+            f"Operating data is missing required column(s): {', '.join(sorted(missing))}."
         )
 
     if frame.empty:
@@ -424,13 +423,9 @@ def validate_operating_data(frame: pd.DataFrame) -> pd.DataFrame:
             f"{', '.join(bad_numeric)}. Every numeric cell must be populated."
         )
 
-    negative = [
-        c for c in _NON_NEGATIVE if c in result.columns and bool((result[c] < 0).any())
-    ]
+    negative = [c for c in _NON_NEGATIVE if c in result.columns and bool((result[c] < 0).any())]
     if negative:
-        raise ValueError(
-            f"Negative values are not valid in column(s): {', '.join(negative)}."
-        )
+        raise ValueError(f"Negative values are not valid in column(s): {', '.join(negative)}.")
 
     over_billed = result["billable_hours"] > result["paid_hours"]
     if bool(over_billed.any()):
@@ -613,7 +608,9 @@ def dimension_rollup(frame: pd.DataFrame, dimension: str) -> pd.DataFrame:
     grouped["ebitda_margin"] = _series_ratio(grouped["ebitda"], grouped["revenue"])
     grouped["recurring_mix"] = _series_ratio(grouped["recurring_revenue"], grouped["revenue"])
     grouped["utilization"] = _series_ratio(grouped["billable_hours"], grouped["paid_hours"])
-    grouped["route_density"] = _series_ratio(grouped["completed_jobs"] * 100, grouped["route_miles"])
+    grouped["route_density"] = _series_ratio(
+        grouped["completed_jobs"] * 100, grouped["route_miles"]
+    )
     grouped["revenue_share"] = _series_ratio(
         grouped["revenue"], pd.Series([grouped["revenue"].sum()] * len(grouped))
     )
@@ -736,8 +733,7 @@ def kpi_summary(
 
 #: Wording used where no published benchmark supports a target.
 TARGET_PROVENANCE = (
-    "Author-defined illustrative target; not externally benchmarked, "
-    "not an industry standard"
+    "Author-defined illustrative target; not externally benchmarked, not an industry standard"
 )
 
 #: Wording used where a published range does support the target.
@@ -763,6 +759,7 @@ def target_provenance(metric: MetricDefinition) -> str:
             "not verified against primary research; not an industry standard"
         )
     return f"{BENCHMARKED_TARGET_PROVENANCE} {metric.benchmark_tier}"
+
 
 #: A breach this far below target, in relative terms, is High rather than Medium.
 HIGH_SEVERITY_RELATIVE_GAP = 0.15
@@ -830,9 +827,7 @@ def exception_report(
                 "Action": metric.action,
             }
         )
-    return pd.DataFrame(
-        rows, columns=["Metric", "Current", "Target", "Gap", "Severity", "Action"]
-    )
+    return pd.DataFrame(rows, columns=["Metric", "Current", "Target", "Gap", "Severity", "Action"])
 
 
 # ---------------------------------------------------------------------------
@@ -1186,12 +1181,10 @@ def generate_sample_data(
     # model, distributing the year's total across segments by their generated
     # shape weights.
     revenue_target = {
-        int(row["Year"]): float(row["Revenue"]) * USD_PER_MILLION
-        for _, row in schedule.iterrows()
+        int(row["Year"]): float(row["Revenue"]) * USD_PER_MILLION for _, row in schedule.iterrows()
     }
     ebitda_target = {
-        int(row["Year"]): float(row["EBITDA"]) * USD_PER_MILLION
-        for _, row in schedule.iterrows()
+        int(row["Year"]): float(row["EBITDA"]) * USD_PER_MILLION for _, row in schedule.iterrows()
     }
     year_series = frame["model_year"].astype(int)
     factor = year_series.map(
@@ -1268,8 +1261,7 @@ def generate_sample_data(
         frame["revenue"] / revenue_by_year * frame["model_year"].map(interest_by_year)
     )
     frame["cash_taxes"] = np.maximum(
-        (frame["ebitda"] - frame["capex"] - frame["cash_interest"])
-        * float(assumptions.tax_rate),
+        (frame["ebitda"] - frame["capex"] - frame["cash_interest"]) * float(assumptions.tax_rate),
         0.0,
     )
     frame["delta_nwc"] = frame["revenue"] * float(assumptions.nwc_pct_incremental_revenue)
@@ -1412,12 +1404,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     print(f"Source: {source}")
     print(f"Scenario for modelled views: {args.scenario}")
     print(f"Model period basis: {period.label}")
-    print(f"Rows: {len(frame):,}  Months: {frame['month'].nunique()}  "
-          f"Period: {frame['month'].min():%Y-%m} to {frame['month'].max():%Y-%m}")
+    print(
+        f"Rows: {len(frame):,}  Months: {frame['month'].nunique()}  "
+        f"Period: {frame['month'].min():%Y-%m} to {frame['month'].max():%Y-%m}"
+    )
     print("\nKPI SUMMARY (trailing 3 months vs prior 3 months)\n")
-    print(summary[["Metric", "Current", "Prior", "Target", "Status"]].to_string(
-        index=False, float_format=lambda x: f"{x:,.4f}"
-    ))
+    print(
+        summary[["Metric", "Current", "Prior", "Target", "Status"]].to_string(
+            index=False, float_format=lambda x: f"{x:,.4f}"
+        )
+    )
     print(f"\nMANAGEMENT EXCEPTIONS: {len(exceptions)}\n")
     if exceptions.empty:
         print("None — every governing KPI is at or above target.")

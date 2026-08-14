@@ -276,9 +276,7 @@ def test_gross_revenue_retention_is_computed_when_inputs_exist(monthly) -> None:
 def test_dso_uses_days_in_month(monthly) -> None:
     row = monthly.iloc[0]
     days = pd.Timestamp(row["month"]).days_in_month
-    assert row["dso"] == pytest.approx(
-        row["accounts_receivable"] * days / row["revenue"], abs=TOL
-    )
+    assert row["dso"] == pytest.approx(row["accounts_receivable"] * days / row["revenue"], abs=TOL)
 
 
 def test_period_window_is_a_ratio_of_sums_not_a_mean_of_ratios(sample, monthly) -> None:
@@ -307,9 +305,7 @@ def test_kpi_summary_covers_every_metric(monthly) -> None:
 
 def test_filtering_then_rolling_matches_rolling_the_filtered_rows(sample) -> None:
     subset = filter_operating_data(sample, regions=["Midwest"], service_lines=["Leak Detection"])
-    direct = sample[
-        (sample["region"] == "Midwest") & (sample["service_line"] == "Leak Detection")
-    ]
+    direct = sample[(sample["region"] == "Midwest") & (sample["service_line"] == "Leak Detection")]
     pd.testing.assert_frame_equal(
         monthly_rollup(subset).reset_index(drop=True),
         monthly_rollup(direct).reset_index(drop=True),
@@ -406,9 +402,9 @@ def test_aggregate_surfaces_exactly_the_benchmarked_shortfalls(monthly) -> None:
 def test_unbenchmarked_metrics_remain_on_track(monthly) -> None:
     """The re-benchmark must not have quietly moved targets we cannot source."""
     summary = kpi_summary(monthly)
-    unsourced = summary[summary["Key"].isin(
-        {"route_density", "gross_margin", "recurring_mix", "fcf_conversion"}
-    )]
+    unsourced = summary[
+        summary["Key"].isin({"route_density", "gross_margin", "recurring_mix", "fcf_conversion"})
+    ]
     assert (unsourced["Status"] == "On track").all()
 
 
@@ -470,9 +466,7 @@ def test_capital_structure_reads_the_model_schedule() -> None:
 
 def test_capital_structure_reflects_the_selected_scenario() -> None:
     base = capital_structure_view(run_scenario(SCENARIOS["base"]), SCENARIOS["base"])
-    downside = capital_structure_view(
-        run_scenario(SCENARIOS["downside"]), SCENARIOS["downside"]
-    )
+    downside = capital_structure_view(run_scenario(SCENARIOS["downside"]), SCENARIOS["downside"])
     assert downside["Ending Debt ($M)"].iloc[-1] > base["Ending Debt ($M)"].iloc[-1]
 
 
@@ -571,9 +565,7 @@ def test_region_and_service_filters_do_not_change_period_mapping(anchored, perio
     full = plan_vs_actual(monthly_rollup(anchored), result, period)
     narrowed = plan_vs_actual(
         monthly_rollup(
-            filter_operating_data(
-                anchored, regions=["Midwest"], service_lines=["Leak Detection"]
-            )
+            filter_operating_data(anchored, regions=["Midwest"], service_lines=["Leak Detection"])
         ),
         result,
         period,
@@ -819,9 +811,9 @@ def test_target_provenance_is_disclosed_everywhere_targets_appear() -> None:
     table = metric_definitions_table()
     for _, row in table.iterrows():
         provenance = row["Target provenance"]
-        assert (
-            "Benchmarked" in provenance or "Author-defined" in provenance
-        ), f"{row['Metric']} states no provenance"
+        assert "Benchmarked" in provenance or "Author-defined" in provenance, (
+            f"{row['Metric']} states no provenance"
+        )
         assert "not an industry standard" in provenance or "not a standard" in provenance
     # Unsourced targets must still be called out in the Thresholds docstring.
     assert "not industry standards" in Thresholds.__doc__

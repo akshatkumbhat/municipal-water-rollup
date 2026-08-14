@@ -258,7 +258,9 @@ def test_exclude_keywords_filter_out_public_entities() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _enrich(fetcher: OfflineFetcher, url: str, name: str = "Co", address: str = "") -> dict[str, object]:
+def _enrich(
+    fetcher: OfflineFetcher, url: str, name: str = "Co", address: str = ""
+) -> dict[str, object]:
     row = {"company_name": name, "company_url": url, "address": address}
     return enrich_company(fetcher, row, "2026-01-01")
 
@@ -288,7 +290,9 @@ def test_malformed_html_still_parses() -> None:
 
 
 def test_missing_fields_do_not_crash() -> None:
-    fetcher = OfflineFetcher({"https://bare.example.com/": "<html><body><p>hello</p></body></html>"})
+    fetcher = OfflineFetcher(
+        {"https://bare.example.com/": "<html><body><p>hello</p></body></html>"}
+    )
     row = _enrich(fetcher, "https://bare.example.com/")
     assert row["website_status"] == "ok"
     assert row["founding_year"] is None
@@ -387,7 +391,14 @@ def test_offline_end_to_end_processes_fifty_plus() -> None:
 def test_apply_scoring_survives_directory_only_frame() -> None:
     """The data_confidence defect fix: no website_status/service columns present."""
     frame = pd.DataFrame(
-        [{"company_age": 30, "technician_count_est": 10, "employee_count_est": 15, "founding_year": 1990}]
+        [
+            {
+                "company_age": 30,
+                "technician_count_est": 10,
+                "employee_count_est": 15,
+                "founding_year": 1990,
+            }
+        ]
     )
     scored = apply_scoring(frame)  # must not raise
     assert scored.iloc[0]["data_confidence"] == 60  # 3 present figures * 20

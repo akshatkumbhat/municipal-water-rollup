@@ -85,9 +85,7 @@ def _pairs(clusters: Mapping[int, int]) -> set[tuple[int, int]]:
     return pairs
 
 
-def pairwise_metrics(
-    truth: Mapping[int, int], predicted: Mapping[int, int]
-) -> ResolutionMetrics:
+def pairwise_metrics(truth: Mapping[int, int], predicted: Mapping[int, int]) -> ResolutionMetrics:
     """Score a predicted clustering against a known-correct one.
 
     Precision answers "of the merges we made, how many were real?" — a low
@@ -124,9 +122,7 @@ def pairwise_metrics(
         if (true_positives + false_negatives)
         else 1.0
     )
-    f1 = (
-        2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
-    )
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
 
     return ResolutionMetrics(
         true_positives=true_positives,
@@ -214,10 +210,7 @@ def inject_typographic_noise(
                 # common real transcription errors.
                 if position + 1 < len(value) and rng.random() < 0.5:
                     value = (
-                        value[:position]
-                        + value[position + 1]
-                        + character
-                        + value[position + 2 :]
+                        value[:position] + value[position + 1] + character + value[position + 2 :]
                     )
                 else:
                     value = value[:position] + value[position + 1 :]
@@ -372,11 +365,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     print(f"  F1                 : {metrics.f1:.4f}")
 
     print("\nRECALL UNDER INPUT NOISE (exact-match ceiling)\n")
-    print(
-        measure_noise_sensitivity().to_string(
-            index=False, float_format=lambda x: f"{x:,.4f}"
-        )
-    )
+    print(measure_noise_sensitivity().to_string(index=False, float_format=lambda x: f"{x:,.4f}"))
 
     validation = validate_lead_score(scored_fixture_targets())
     print("\nLEAD SCORE: PRECISION@15 AGAINST THE ANCHOR TECHNICIAN BAND\n")
@@ -397,7 +386,6 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     written = write_evaluation_outputs(Path(args.output_dir))
     print(f"\n{len(written)} file(s) written to {args.output_dir}/")
-
 
 
 # ---------------------------------------------------------------------------

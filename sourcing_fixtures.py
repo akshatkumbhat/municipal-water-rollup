@@ -22,25 +22,67 @@ PRIMARY_COUNT = 54
 DIRECTORY_SOURCE = "Offline Synthetic Directory"
 
 _ADJ = [
-    "Summit", "Cascade", "Ironwood", "Blue Heron", "Granite", "Riverbend",
-    "Copper", "Sterling", "Meridian", "Harbor", "Prairie", "Cedar", "Vantage",
-    "Keystone", "Anchor", "Pioneer", "Redwood", "Northgate", "Clearwater",
+    "Summit",
+    "Cascade",
+    "Ironwood",
+    "Blue Heron",
+    "Granite",
+    "Riverbend",
+    "Copper",
+    "Sterling",
+    "Meridian",
+    "Harbor",
+    "Prairie",
+    "Cedar",
+    "Vantage",
+    "Keystone",
+    "Anchor",
+    "Pioneer",
+    "Redwood",
+    "Northgate",
+    "Clearwater",
     "Trailhead",
 ]
 _NOUN = [
-    "Water", "Sewer", "Pipeline", "Utility", "Underground", "Aqua",
-    "Drainage", "Hydro", "Wastewater", "Infrastructure",
+    "Water",
+    "Sewer",
+    "Pipeline",
+    "Utility",
+    "Underground",
+    "Aqua",
+    "Drainage",
+    "Hydro",
+    "Wastewater",
+    "Infrastructure",
 ]
 _KIND = ["Services", "Solutions", "Contractors", "Group", "Partners", "Systems"]
 
 _STREET = [
-    "Main", "Oak", "Cedar", "Riverside", "Industrial", "Commerce", "Lakeview",
-    "Millpond", "Foundry", "Harborview",
+    "Main",
+    "Oak",
+    "Cedar",
+    "Riverside",
+    "Industrial",
+    "Commerce",
+    "Lakeview",
+    "Millpond",
+    "Foundry",
+    "Harborview",
 ]
 _STREET_TYPE = ["Street", "Avenue", "Road", "Boulevard", "Drive"]
 _CITY = [
-    "Ashford", "Brookline", "Cedar Falls", "Dryden", "Fairhaven", "Glenwood",
-    "Hartley", "Kingsport", "Lakemont", "Millbrook", "Norwood", "Parkdale",
+    "Ashford",
+    "Brookline",
+    "Cedar Falls",
+    "Dryden",
+    "Fairhaven",
+    "Glenwood",
+    "Hartley",
+    "Kingsport",
+    "Lakemont",
+    "Millbrook",
+    "Norwood",
+    "Parkdale",
 ]
 _STATE = ["WA", "OR", "ID", "MT", "CO", "UT"]
 
@@ -70,7 +112,9 @@ def _names() -> list[str]:
     names: list[str] = []
     seen: set[str] = set()
     for i in range(PRIMARY_COUNT):
-        base = f"{_ADJ[i % len(_ADJ)]} {_NOUN[(i // 3) % len(_NOUN)]} {_KIND[(i // 5) % len(_KIND)]}"
+        base = (
+            f"{_ADJ[i % len(_ADJ)]} {_NOUN[(i // 3) % len(_NOUN)]} {_KIND[(i // 5) % len(_KIND)]}"
+        )
         candidate = base
         counter = 2
         while re.sub(r"\W+", "", candidate.lower()) in seen:
@@ -107,7 +151,7 @@ def phone_for(i: int) -> str:
 
 def _company_spec(i: int) -> dict[str, Any]:
     """Deterministic per-company attributes exercising each enrichment path."""
-    missing = i % 9 == 0            # everything-missing archetype (low confidence)
+    missing = i % 9 == 0  # everything-missing archetype (low confidence)
     fleet_only = (i % 3 == 0) and not missing  # forces fleet -> technician inference
     services = [] if missing else _SERVICE_DISPLAY[: (i % 6) + 1]
     return {
@@ -197,9 +241,9 @@ def build_offline_dataset() -> tuple[list[dict[str, str]], dict[str, str], set[s
         )
 
         if i != 0 and i % 17 == 0:
-            blocked.add(url)          # robots-denied / non-HTML: no page served
+            blocked.add(url)  # robots-denied / non-HTML: no page served
         elif i != 0 and i % 19 == 0:
-            errors.add(url)           # transport failure: no page served
+            errors.add(url)  # transport failure: no page served
         else:
             pages[url] = render_company_html(spec)
 
@@ -228,7 +272,7 @@ def build_offline_dataset() -> tuple[list[dict[str, str]], dict[str, str], set[s
 # the answer key to measure deduplication precision and recall rather than
 # asserting the merges are right.
 DUPLICATE_OF: dict[int, int] = {
-    PRIMARY_COUNT: 3,      # "Summit Regional Sewer Partners" duplicates company 3
+    PRIMARY_COUNT: 3,  # "Summit Regional Sewer Partners" duplicates company 3
     PRIMARY_COUNT + 1: 7,  # uppercase "..., LLC" variant duplicates company 7
 }
 

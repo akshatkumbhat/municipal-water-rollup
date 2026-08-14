@@ -279,7 +279,9 @@ def test_empty_universe_fails_cleanly() -> None:
         select_candidate(pd.DataFrame())
 
 
-def test_candidate_identity_is_consistent_across_every_artifact(package, manifest, ic_summary) -> None:
+def test_candidate_identity_is_consistent_across_every_artifact(
+    package, manifest, ic_summary
+) -> None:
     """The same company must appear in sourcing, manifest, and the summary."""
     name = package.selection.name
     out = package.output_dir
@@ -316,9 +318,7 @@ def test_funnel_stages_reconcile_to_the_universe(package) -> None:
     counts = dict(zip(funnel["Stage"], funnel["Count"], strict=True))
 
     assert counts["Unique companies after deduplication"] == len(universe)
-    assert counts["Directory records collected"] == int(
-        universe["duplicate_count"].fillna(1).sum()
-    )
+    assert counts["Directory records collected"] == int(universe["duplicate_count"].fillna(1).sum())
     assert counts["Directory records collected"] >= counts["Unique companies after deduplication"]
     # Clean enrichment plus limited-evidence records must equal the scored total,
     # so blocked and errored fetches are visible rather than folded into "success".
@@ -566,7 +566,9 @@ def test_packaged_model_matches_a_direct_scenario_run(package) -> None:
 
 def test_phase4_default_kpis_are_unchanged(package) -> None:
     """The package must reproduce Phase 4's default KPI results exactly."""
-    direct = kpi_summary(monthly_rollup(validate_operating_data(generate_sample_data())), Thresholds())
+    direct = kpi_summary(
+        monthly_rollup(validate_operating_data(generate_sample_data())), Thresholds()
+    )
     packaged = pd.read_csv(package.output_dir / "03_operating" / "kpi_summary.csv")
 
     assert list(packaged["Metric"]) == list(direct["Metric"])
@@ -872,9 +874,7 @@ def test_summary_records_the_correction_rather_than_hiding_it(ic_summary) -> Non
 
 
 def test_benchmark_table_scores_every_material_assumption(package) -> None:
-    table = pd.read_csv(
-        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
-    )
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
     assert len(table) >= 8
     for column in ("Assumption", "Model value", "Published range", "Tier", "Verdict"):
         assert column in table.columns
@@ -883,9 +883,7 @@ def test_benchmark_table_scores_every_material_assumption(package) -> None:
 
 def test_benchmark_table_shows_aggression_and_conservatism_both(package) -> None:
     """A table that only flattered the model would be worthless."""
-    table = pd.read_csv(
-        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
-    )
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
     verdicts = " ".join(table["Verdict"])
     assert "ABOVE" in verdicts, "must flag inputs above the evidence"
     assert "BELOW range" in verdicts, "must flag inputs below the evidence"
@@ -894,9 +892,7 @@ def test_benchmark_table_shows_aggression_and_conservatism_both(package) -> None
 
 def test_practitioner_sourced_verdicts_are_marked_indicative(package) -> None:
     """The provenance rule, enforced: [D] sources may not be load-bearing."""
-    table = pd.read_csv(
-        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
-    )
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
     practitioner = table[table["Tier"].str.startswith("[D]")]
     assert not practitioner.empty
     assert practitioner["Verdict"].str.contains("indicative only").all()
@@ -907,9 +903,7 @@ def test_practitioner_sourced_verdicts_are_marked_indicative(package) -> None:
 
 
 def test_benchmark_table_marks_unbenchmarked_inputs_honestly(package) -> None:
-    table = pd.read_csv(
-        package.output_dir / "04_reference" / "assumption_benchmarks.csv"
-    )
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
     unsourced = table[table["Tier"] == "none"]
     assert not unsourced.empty
     assert unsourced["Verdict"].eq("Unbenchmarked").all()

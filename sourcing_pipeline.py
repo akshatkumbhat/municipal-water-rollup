@@ -84,17 +84,28 @@ EXCLUDE_KEYWORDS = {
 }
 
 FOUNDING_PATTERNS = (
-    re.compile(r"(?:founded|established|since|serving .* since)\D{0,18}(18\d{2}|19\d{2}|20[0-2]\d)", re.I),
+    re.compile(
+        r"(?:founded|established|since|serving .* since)\D{0,18}(18\d{2}|19\d{2}|20[0-2]\d)", re.I
+    ),
     re.compile(r"\b(18\d{2}|19\d{2}|20[0-2]\d)\b.{0,20}(?:founded|established)", re.I),
 )
 EMPLOYEE_PATTERNS = (
-    re.compile(r"\b(?:team of|more than|over|approximately|about)?\s*(\d{1,4})\+?\s+(?:employees|people|staff members)\b", re.I),
+    re.compile(
+        r"\b(?:team of|more than|over|approximately|about)?\s*(\d{1,4})\+?\s+(?:employees|people|staff members)\b",
+        re.I,
+    ),
 )
 TECHNICIAN_PATTERNS = (
-    re.compile(r"\b(?:team of|more than|over|approximately|about)?\s*(\d{1,3})\+?\s+(?:technicians|field technicians|operators|crews)\b", re.I),
+    re.compile(
+        r"\b(?:team of|more than|over|approximately|about)?\s*(\d{1,3})\+?\s+(?:technicians|field technicians|operators|crews)\b",
+        re.I,
+    ),
 )
 FLEET_PATTERNS = (
-    re.compile(r"\b(?:fleet of|more than|over|approximately|about)?\s*(\d{1,3})\+?\s+(?:trucks|service vehicles|vans)\b", re.I),
+    re.compile(
+        r"\b(?:fleet of|more than|over|approximately|about)?\s*(\d{1,3})\+?\s+(?:trucks|service vehicles|vans)\b",
+        re.I,
+    ),
 )
 PHONE_RE = re.compile(r"(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}")
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
@@ -389,7 +400,9 @@ def first_link(node: Tag, selector: str, base_url: str) -> str:
     return ""
 
 
-def parse_json_ld(soup: BeautifulSoup, source: DirectorySource, page_url: str) -> list[dict[str, str]]:
+def parse_json_ld(
+    soup: BeautifulSoup, source: DirectorySource, page_url: str
+) -> list[dict[str, str]]:
     records: list[dict[str, str]] = []
     for tag in soup.select("script[type='application/ld+json']"):
         try:
@@ -406,7 +419,9 @@ def parse_json_ld(soup: BeautifulSoup, source: DirectorySource, page_url: str) -
         for item in expanded:
             item_type = item.get("@type", "")
             types = {item_type} if isinstance(item_type, str) else set(item_type or [])
-            if not types.intersection({"Organization", "LocalBusiness", "ProfessionalService", "Corporation"}):
+            if not types.intersection(
+                {"Organization", "LocalBusiness", "ProfessionalService", "Corporation"}
+            ):
                 continue
             name = str(item.get("name", "")).strip()
             if not name:
@@ -425,7 +440,9 @@ def parse_json_ld(soup: BeautifulSoup, source: DirectorySource, page_url: str) -
                     "address": str(address),
                     "directory_source": source.name,
                     "directory_page": page_url,
-                    "directory_text": " ".join(str(item.get(k, "")) for k in ("description", "telephone")),
+                    "directory_text": " ".join(
+                        str(item.get(k, "")) for k in ("description", "telephone")
+                    ),
                 }
             )
     return records
@@ -579,14 +596,22 @@ def enrich_company(fetcher: HtmlFetcher, row: dict[str, Any], verified_on: str) 
     url = canonicalize_url(str(row.get("company_url", "")))
     if not url:
         result.update(
-            {"website_status": "missing", "enrichment_error": "No company URL", "evidence_summary": ""}
+            {
+                "website_status": "missing",
+                "enrichment_error": "No company URL",
+                "evidence_summary": "",
+            }
         )
         return result
     try:
         html = fetcher.fetch(url)
         if not html:
             result.update(
-                {"website_status": "blocked", "enrichment_error": "robots or non-HTML", "evidence_summary": ""}
+                {
+                    "website_status": "blocked",
+                    "enrichment_error": "robots or non-HTML",
+                    "evidence_summary": "",
+                }
             )
             return result
         soup = BeautifulSoup(html, "html.parser")
@@ -598,7 +623,14 @@ def enrich_company(fetcher: HtmlFetcher, row: dict[str, Any], verified_on: str) 
             for anchor in soup.select("a[href]")
             if any(
                 social in attr_str(anchor, "href").lower()
-                for social in ("linkedin.com", "facebook.com", "instagram.com", "youtube.com", "x.com", "twitter.com")
+                for social in (
+                    "linkedin.com",
+                    "facebook.com",
+                    "instagram.com",
+                    "youtube.com",
+                    "x.com",
+                    "twitter.com",
+                )
             )
         }
         emails = sorted(set(EMAIL_RE.findall(text)))
@@ -642,7 +674,8 @@ def enrich_company(fetcher: HtmlFetcher, row: dict[str, Any], verified_on: str) 
                 "email_found": bool(emails),
                 "phone_found": bool(phones),
                 "contact_page_found": any(
-                    token in lower_text for token in ("contact us", "request a quote", "get in touch")
+                    token in lower_text
+                    for token in ("contact us", "request a quote", "get in touch")
                 ),
                 "careers_page_found": "careers" in lower_text or "join our team" in lower_text,
                 "primary_email": emails[0] if emails else "",
@@ -724,9 +757,12 @@ def digital_whitespace_score(row: pd.Series) -> float:
 
 def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     scored = df.copy()
-    scored["age_score"] = scored.get("company_age", pd.Series(index=scored.index, dtype=float)).map(age_score)
+    scored["age_score"] = scored.get("company_age", pd.Series(index=scored.index, dtype=float)).map(
+        age_score
+    )
     scored["workforce_score"] = scored.apply(
-        lambda r: workforce_score(r.get("technician_count_est"), r.get("employee_count_est")), axis=1
+        lambda r: workforce_score(r.get("technician_count_est"), r.get("employee_count_est")),
+        axis=1,
     )
     scored["digital_whitespace_score"] = scored.apply(digital_whitespace_score, axis=1)
     scored["priority_score"] = (
@@ -742,7 +778,9 @@ def apply_scoring(df: pd.DataFrame) -> pd.DataFrame:
     else:
         website_ok = pd.Series(False, index=scored.index)
     if "service_keyword_count" in scored.columns:
-        keyword_positive = pd.to_numeric(scored["service_keyword_count"], errors="coerce").fillna(0).gt(0)
+        keyword_positive = (
+            pd.to_numeric(scored["service_keyword_count"], errors="coerce").fillna(0).gt(0)
+        )
     else:
         keyword_positive = pd.Series(False, index=scored.index)
     scored["data_confidence"] = (
@@ -785,9 +823,7 @@ def order_scored_targets(scored: pd.DataFrame) -> pd.DataFrame:
 
     domains = working.get("domain", pd.Series("", index=working.index, dtype=object))
     urls = working.get("company_url", pd.Series("", index=working.index, dtype=object))
-    working["_source_key"] = (
-        domains.fillna("").astype(str) + "|" + urls.fillna("").astype(str)
-    )
+    working["_source_key"] = domains.fillna("").astype(str) + "|" + urls.fillna("").astype(str)
 
     ordered = working.sort_values(
         list(TARGET_ORDER_COLUMNS), ascending=list(TARGET_ORDER_ASCENDING), kind="mergesort"
@@ -873,7 +909,10 @@ def clean_and_deduplicate(records: list[dict[str, Any]]) -> pd.DataFrame:
         ("domain", [str(r.get("domain", "")) for r in cleaned]),
         (
             "phone",
-            [canonical_phone(str(r.get("phone_canonical") or r.get("primary_phone", ""))) for r in cleaned],
+            [
+                canonical_phone(str(r.get("phone_canonical") or r.get("primary_phone", "")))
+                for r in cleaned
+            ],
         ),
         ("name", [name_slug(str(r.get("company_name", ""))) for r in cleaned]),
         ("address", [normalize_address(str(r.get("address", ""))) for r in cleaned]),
@@ -905,17 +944,20 @@ def clean_and_deduplicate(records: list[dict[str, Any]]) -> pd.DataFrame:
     for root, members in groups.items():
         representative = min(
             members,
-            key=lambda i: (cleaned[i].get("company_url", "") == "", cleaned[i].get("domain", "") == "", i),
+            key=lambda i: (
+                cleaned[i].get("company_url", "") == "",
+                cleaned[i].get("domain", "") == "",
+                i,
+            ),
         )
         rep_row = dict(cleaned[representative])
-        absorbed = sorted(
-            str(cleaned[i]["company_name"]) for i in members if i != representative
-        )
+        absorbed = sorted(str(cleaned[i]["company_name"]) for i in members if i != representative)
         rep_row["duplicate_count"] = len(members)
         rep_row["merged_from"] = "; ".join(absorbed)
         rep_row["merge_reason"] = ", ".join(sorted(root_reasons[root])) if len(members) > 1 else ""
         rep_row["merged_source_rows"] = "; ".join(
-            str(cleaned[i]["source_row"]) for i in sorted(members, key=lambda i: cleaned[i]["source_row"])
+            str(cleaned[i]["source_row"])
+            for i in sorted(members, key=lambda i: cleaned[i]["source_row"])
         )
         survivors.append((representative, rep_row))
 
