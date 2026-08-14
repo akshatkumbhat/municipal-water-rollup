@@ -41,7 +41,7 @@ make package        # ~15 seconds, fully offline
 
 Then read `outputs/candidate_package/IC_SUMMARY.md`.
 
-356 tests, no network access anywhere in the suite.
+361 tests, no network access anywhere in the suite.
 
 ## Platform definition
 
@@ -486,7 +486,7 @@ This repository includes a Claude Code operating layer:
 - `CLAUDE.md` — persistent project rules and financial/data guardrails.
 - `BACKLOG.md` — phase gates and acceptance criteria.
 - `METHODOLOGY.md` — how this repository was built, phase by phase.
-- `prompts/` — bounded phase specifications with acceptance criteria.
+- `specs/` — bounded phase specifications with acceptance criteria.
 - `.claude/skills/` — `/implement-phase` and `/ic-review`.
 - `.claude/agents/` — independent data-engineering, underwriting, and COO reviewers.
 
@@ -499,5 +499,5 @@ claude --permission-mode plan
 Then paste the audit prompt from [`METHODOLOGY.md`](METHODOLOGY.md) §2. After approving the Phase 1 plan, run phases one at a time using:
 
 ```text
-/implement-phase prompts/01_engineering_foundation.md
+/implement-phase specs/01_engineering_foundation.md
 ```

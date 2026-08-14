@@ -45,7 +45,7 @@ Then open with the repository audit:
 
 ```text
 Read CLAUDE.md, BACKLOG.md, PROJECT_BLUEPRINT.md, README.md, and
-prompts/00_repository_audit.md. Work in plan mode. Reproduce the current model
+specs/00_repository_audit.md. Work in plan mode. Reproduce the current model
 output and compile all scripts. Then provide the complete Phase 0 audit and the
 smallest file-level plan for Phase 1. Do not edit files and do not begin later
 phases.
@@ -66,7 +66,7 @@ and stop after reporting evidence of completion.
 For each later phase:
 
 ```text
-/implement-phase prompts/02_sourcing_engine.md
+/implement-phase specs/02_sourcing_engine.md
 ```
 
 Then repeat with the next prompt file. Keep each phase in its own commit:

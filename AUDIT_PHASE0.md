@@ -1,5 +1,12 @@
 # Project Copperline — Phase 0 Repository Audit
 
+> **Historical record — superseded.** This captures the repository as it stood
+> on 2026-07-30, before Phases 1–6. The counts, file layout, and gaps below
+> describe that starting point, not the current codebase: the project now has
+> 361 tests and a restructured `outputs/` tree. It is kept as the baseline the
+> later phases were measured against. For current status see `BACKLOG.md`; for
+> how the build proceeded see `METHODOLOGY.md`.
+
 Date: 2026-07-30. No source was changed during this audit.
 
 ## Current state

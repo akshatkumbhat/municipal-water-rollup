@@ -44,7 +44,7 @@ make dashboard
 
 ## Working method
 For each phase:
-1. Read the relevant prompt under `prompts/` and inspect existing code.
+1. Read the relevant prompt under `specs/` and inspect existing code.
 2. State assumptions and produce a file-level plan before editing.
 3. Implement only the active phase; avoid opportunistic rewrites.
 4. Run targeted tests, then `make lint` and `make test`.
