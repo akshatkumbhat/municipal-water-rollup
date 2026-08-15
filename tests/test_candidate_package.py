@@ -37,6 +37,7 @@ from candidate_package import (
     build_package,
     main,
     order_targets,
+    score_distribution,
     select_candidate,
     verify_package,
 )
@@ -1045,3 +1046,53 @@ def test_return_flattering_inputs_still_carry_the_verdicts_described(package, ic
     # And the one that cuts the other way is still flagged conservative.
     assert "conservative" in verdicts["Year-5 exit mark"]
     assert "Three of those cut in favour of the returns" in ic_summary
+
+
+# ---------------------------------------------------------------------------
+# Score discrimination.
+#
+# The tie disclosure shows the symptom; score_distribution.csv shows the cause.
+# These assert the diagnostic ships, that its bands account for the whole
+# universe, and that the narrative counts are the frame's own.
+# ---------------------------------------------------------------------------
+
+
+def test_score_distribution_is_shipped_and_recorded(package, manifest) -> None:
+    path = package.output_dir / "01_sourcing" / "score_distribution.csv"
+    assert path.exists()
+    listed = {a["path"] for a in manifest["artifacts"]}
+    assert "01_sourcing/score_distribution.csv" in listed
+
+
+def test_score_bands_account_for_every_company(package) -> None:
+    frame = pd.read_csv(package.output_dir / "01_sourcing" / "score_distribution.csv")
+    total = int(frame.loc[frame["Band"] == "TOTAL", "Companies"].iloc[0])
+    banded = int(frame.loc[frame["Band"] != "TOTAL", "Companies"].sum())
+    assert banded == total, "bands must partition the universe, not overlap or drop"
+
+
+def test_summary_quotes_the_distribution_it_ships(package, ic_summary) -> None:
+    universe = pd.read_csv(package.output_dir / "01_sourcing" / "target_universe.csv")
+    scores = pd.to_numeric(universe["priority_score"], errors="coerce").dropna()
+    top = float(scores.max())
+    at_top = int(scores.eq(top).sum())
+    within_five = int(scores.ge(top - 5).sum())
+
+    assert f"{at_top} companies score exactly {top:.0f}" in ic_summary
+    assert f"and {within_five} of" in ic_summary
+    assert "01_sourcing/score_distribution.csv" in ic_summary
+
+
+def test_saturation_is_named_as_an_instrument_limitation(package, ic_summary) -> None:
+    """It is a property of the score, not of the fixture data. Say so."""
+    assert "instrument-design limitation, not a data artifact" in ic_summary
+    limitations = (package.output_dir / "04_reference" / "limitations.md").read_text(
+        encoding="utf-8"
+    )
+    assert "does not discriminate at the top" in limitations
+    assert "score_distribution.csv" in limitations
+
+
+def test_score_distribution_rejects_an_unscored_universe() -> None:
+    with pytest.raises(PackageError, match="no scores present"):
+        score_distribution(pd.DataFrame({"priority_score": [None, None]}))

@@ -272,6 +272,46 @@ def select_candidate(targets: pd.DataFrame) -> CandidateSelection:
     return CandidateSelection(candidate=candidate, tied=ranked, rule=rule, rationale=rationale)
 
 
+def score_distribution(targets: pd.DataFrame) -> pd.DataFrame:
+    """How well the priority score separates the universe, band by band.
+
+    The tie disclosure says several companies share the top score. That is a
+    symptom; this table is the diagnosis. A screening instrument is only useful
+    where it discriminates, and this one compresses its top quartile into a few
+    points — so the decision it is meant to inform is the decision it is least
+    able to support. Shipped so a reviewer sees the compression rather than
+    inferring it from a tie.
+    """
+    scores = pd.to_numeric(targets["priority_score"], errors="coerce").dropna()
+    if scores.empty:
+        raise PackageError("Cannot describe the score distribution: no scores present.")
+
+    top = float(scores.max())
+    bands = [
+        ("At the maximum", scores.eq(top)),
+        ("Within 2 points of it", scores.between(top - 2, top, inclusive="left")),
+        ("Within 5 points of it", scores.between(top - 5, top - 2, inclusive="left")),
+        ("Within 10 points of it", scores.between(top - 10, top - 5, inclusive="left")),
+        ("More than 10 points below", scores.lt(top - 10)),
+    ]
+    rows = [
+        {
+            "Band": label,
+            "Companies": int(mask.sum()),
+            "Share of universe": f"{mask.sum() / len(scores):.1%}",
+        }
+        for label, mask in bands
+    ]
+    rows.append(
+        {
+            "Band": "TOTAL",
+            "Companies": int(len(scores)),
+            "Share of universe": "100.0%",
+        }
+    )
+    return pd.DataFrame(rows)
+
+
 def sourcing_funnel(targets: pd.DataFrame, selection: CandidateSelection) -> pd.DataFrame:
     """The funnel a reviewer walks: universe -> scored -> top 15 -> selected."""
     scored = targets[targets["priority_score"].notna()]
@@ -517,9 +557,16 @@ to-do items: each is a property of the deliverable as shipped.
 
 ## Selection
 
-4. **Candidate selection required a tiebreak.** Several fixture companies tie
-   at the maximum priority score. The final tiebreak is alphabetical and
-   carries no investment meaning. See `01_sourcing/selection_tie_disclosure.csv`.
+4. **The priority score does not discriminate at the top, so selection required
+   a tiebreak.** Several fixture companies tie at the maximum, and a larger
+   group sits within a few points of it: see
+   `01_sourcing/score_distribution.csv` for the band-by-band counts and
+   `01_sourcing/selection_tie_disclosure.csv` for the tied set. The final
+   tiebreak is alphabetical and carries no investment meaning. Treat this as a
+   property of the instrument rather than of the fixtures — the score separates
+   unsuitable from plausible, then goes flat exactly where a shortlist has to
+   be cut. Fixing it means rescaling the component curves, which would change
+   the selected candidate and every artifact derived from it.
 
 ## Model
 
@@ -588,6 +635,7 @@ def _by_unit(value: float, unit: str) -> str:
 def render_ic_summary(
     results: dict[str, ModelResult],
     stress: dict[str, ModelResult],
+    targets: pd.DataFrame,
     selection: CandidateSelection,
     operating_kpis: pd.DataFrame,
     operating_exceptions: pd.DataFrame,
@@ -795,6 +843,26 @@ def render_ic_summary(
     add("The score decomposes into company age (35 points), field workforce fit (40),")
     add("and digital whitespace (25), with a separate data-confidence score to prevent")
     add("false precision. Scoring is owned by `sourcing_pipeline.py`.")
+    add("")
+    scores = pd.to_numeric(targets["priority_score"], errors="coerce").dropna()
+    top_score = float(scores.max())
+    at_top = int(scores.eq(top_score).sum())
+    within_five = int(scores.ge(top_score - 5).sum())
+    add("### The score does not discriminate where the decision is made")
+    add("")
+    add(f"{at_top} companies score exactly {top_score:.0f}, and {within_five} of")
+    add(f"{len(scores)} sit within five points of the maximum — roughly")
+    add(f"{within_five / len(scores):.0%} of the universe compressed into the top few")
+    add("points of a 100-point scale. Band-by-band counts are in")
+    add("`01_sourcing/score_distribution.csv`.")
+    add("")
+    add("**This is an instrument-design limitation, not a data artifact.** A screening")
+    add("score earns its place by separating candidates; this one separates the")
+    add("clearly-unsuitable from the plausible, then goes flat exactly where a")
+    add("shortlist has to be cut. The tie below is the visible symptom. Widening the")
+    add("component curves, or adding a dimension with real discriminating power,")
+    add("would change the selected candidate and every downstream artifact, so it is")
+    add("recorded here as a known limitation rather than patched silently.")
     add("")
 
     # ---- Operating case
@@ -1289,6 +1357,13 @@ def build_package(
         "The single selected anchor candidate record.",
     )
 
+    score_distribution(targets).to_csv(sourcing_dir / "score_distribution.csv", index=False)
+    record(
+        f"{SOURCING_DIR}/score_distribution.csv",
+        "sourcing",
+        PROVENANCE["fixture"],
+        "How well the priority score separates the universe, band by band.",
+    )
     selection.tied.to_csv(sourcing_dir / "selection_tie_disclosure.csv", index=False)
     record(
         f"{SOURCING_DIR}/selection_tie_disclosure.csv",
@@ -1454,6 +1529,7 @@ def build_package(
         render_ic_summary(
             results,
             stress_results,
+            targets,
             selection,
             operating_summary,
             operating_exceptions,
