@@ -993,3 +993,55 @@ def test_limitations_records_the_stress_and_its_limits(package) -> None:
     assert "author-defined" in text
     assert "not a guaranteed lower bound" in text
     assert "This remains the most" not in text
+
+
+# ---------------------------------------------------------------------------
+# Evidence position.
+#
+# The summary states, in the reader's first screen, how much of the model rests
+# on real evidence. Those counts are computed from the benchmark table, so the
+# tests below assert the narrative and the table cannot disagree — and that the
+# authored interpretation still matches the verdicts it describes.
+# ---------------------------------------------------------------------------
+
+
+def test_summary_states_the_evidence_position_from_the_table(package, ic_summary) -> None:
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
+    strong = int(table["Tier"].str.startswith(("[A]", "[B]")).sum())
+    industry = int(table["Tier"].str.startswith("[C]").sum())
+    indicative = int(table["Tier"].str.startswith("[D]").sum())
+    unbenchmarked = int(table["Tier"].eq("none").sum())
+
+    assert f"Of the {len(table)} material model inputs" in ic_summary
+    assert f"**{strong} are supported by" in ic_summary
+    assert f"{industry} rest on industry-research" in ic_summary
+    assert f"{indicative} on practitioner" in ic_summary
+    assert f"and {unbenchmarked} had no usable" in ic_summary
+
+
+def test_summary_states_no_model_input_has_strong_evidence(package) -> None:
+    """If this ever stops being true, the narrative claim must be revisited."""
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
+    assert not table["Tier"].str.startswith(("[A]", "[B]")).any()
+
+
+def test_summary_says_blueprint_provenance_is_not_evidence(ic_summary) -> None:
+    assert "not evidence that the number is right" in ic_summary
+    assert "written by the same author" in ic_summary
+
+
+def test_return_flattering_inputs_still_carry_the_verdicts_described(package, ic_summary) -> None:
+    """Guards the authored reading of the table against the table changing.
+
+    The summary asserts that three inputs sit outside their cited range in the
+    direction that helps returns. Each must still be outside it.
+    """
+    table = pd.read_csv(package.output_dir / "04_reference" / "assumption_benchmarks.csv")
+    verdicts = dict(zip(table["Assumption"], table["Verdict"], strict=True))
+
+    assert "ABOVE" in verdicts["Platform EBITDA margin"]
+    assert "BELOW" in verdicts["Add-on entry multiple"]
+    assert "BELOW" in verdicts["Interest rate"]
+    # And the one that cuts the other way is still flagged conservative.
+    assert "conservative" in verdicts["Year-5 exit mark"]
+    assert "Three of those cut in favour of the returns" in ic_summary
