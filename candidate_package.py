@@ -54,6 +54,7 @@ from buy_and_build_model import (
     SCENARIOS,
     ModelResult,
     Scenario,
+    load_scenarios,
     return_bridge,
     run_scenario,
     scenario_comparison,
@@ -95,6 +96,14 @@ MANAGED_ENTRIES = (
 )
 
 SCENARIO_ORDER = ("base", "downside", "upside")
+
+# Author-defined stress cases, kept deliberately separate from the three
+# blueprint scenarios above. The shipped `downside` is the blueprint's own IC
+# guardrail case and is not replaced by these; they are additional, and the
+# package labels them author-defined wherever they appear.
+STRESS_DIR = f"{MODEL_DIR}/stress"
+STRESS_SCENARIO_FILE = Path(__file__).resolve().parent / "examples" / "scenarios.json"
+STRESS_ORDER = ("severe-downside", "integration-failure")
 
 # PROJECT_BLUEPRINT.md anchor-platform profile: 15-60 technicians/operators.
 ANCHOR_TECHNICIAN_MIN = 15
@@ -475,13 +484,16 @@ def assumption_benchmark_table(scenario: Scenario) -> pd.DataFrame:
     )
 
 
-def limitations_markdown() -> str:
+def limitations_markdown(stress: dict[str, ModelResult]) -> str:
     """Known limitations carried into the deliverable rather than hidden.
 
     These are open items recorded in BACKLOG.md. Phase 5 discloses them; it
-    does not change the implementations behind them.
+    does not change the implementations behind them. Figures quoted for the
+    stress cases are read from the same `ModelResult` objects that produced
+    `02_model/stress/*`, so this text cannot drift from those outputs.
     """
-    return """# Known limitations
+    severe = stress["severe-downside"].returns
+    return f"""# Known limitations
 
 Every item below is a real constraint on this package, recorded so a reviewer
 is not misled about what these outputs support. They are disclosures, not
@@ -511,11 +523,18 @@ to-do items: each is a property of the deliverable as shipped.
 
 ## Model
 
-5. **The downside case is not severe.** It stresses only organic growth,
-   synergy capture, interest rate, and the exit mark. It does not stress the
-   entry multiple, platform margin, customer concentration, or add-on
-   execution failure. It should not be read as a floor. This remains the most
-   significant open limitation of the underwriting.
+5. **The blueprint downside is not severe, and is not the floor.** It stresses
+   only organic growth, synergy capture, interest rate, and the exit mark. It
+   does not stress the entry multiple, platform margin, customer concentration,
+   or add-on execution failure, and it should not be read as a lower bound. The
+   author-defined stress cases in `02_model/stress/` do vary those drivers:
+   `severe-downside` returns {_turns(severe["gross_moic"])} MOIC /
+   {_pct(severe["gross_irr"])} IRR — capital impairment, not a poor outcome.
+   Two caveats on that case. It is author-defined, not a blueprint scenario, so
+   it carries no more evidentiary weight than the judgement behind it. And it
+   is a modelled stress, not a guaranteed lower bound: worse outcomes remain
+   possible, since neither case models a covenant breach, a forced sale, or the
+   loss of a major municipal contract.
 6. **The leverage governor is a modelling input, not a covenant.**
    `max_pro_forma_leverage` sizes acquisition debt; no covenant is modelled
    anywhere in this repository. `leverage_limit_exceeded` flags years where
@@ -568,6 +587,7 @@ def _by_unit(value: float, unit: str) -> str:
 
 def render_ic_summary(
     results: dict[str, ModelResult],
+    stress: dict[str, ModelResult],
     selection: CandidateSelection,
     operating_kpis: pd.DataFrame,
     operating_exceptions: pd.DataFrame,
@@ -905,13 +925,51 @@ def render_ic_summary(
     add(f"interest, 6.0x exit mark — returns {_turns(dr['gross_moic'])} MOIC and ")
     add(f"{_pct(dr['gross_irr'])} IRR, with terminal debt of {_money(dr['terminal_debt'])}.")
     add("")
-    add("> **This downside should not be read as a floor.** It stresses only four")
-    add("> variables: growth, synergy capture, interest rate, and the exit multiple. It")
-    add("> does not stress the entry multiple, platform margin, customer concentration,")
-    add("> integration failure, or the loss of a major municipal contract. A case that")
-    add("> still returns")
-    add(f"> {_turns(dr['gross_moic'])} is a sensitivity, not a stress test. Underwriting")
-    add("> committee attention should focus on what is *not* varied here.")
+    add("> **This downside is not the floor.** It stresses only four variables:")
+    add("> growth, synergy capture, interest rate, and the exit multiple. It does not")
+    add("> stress the entry multiple, platform margin, customer concentration, or")
+    add("> integration failure. A case that still returns")
+    add(f"> {_turns(dr['gross_moic'])} is a sensitivity, not a stress test.")
+    add("")
+    sv = stress["severe-downside"].returns
+    itf = stress["integration-failure"].returns
+    add("### The case that does stress those drivers  `author`-defined")
+    add("")
+    add("Because the blueprint case leaves the return-critical drivers untouched, two")
+    add("author-defined stress cases are modelled and shipped in `02_model/stress/`.")
+    add("They do not replace the blueprint downside above, and they carry no")
+    add("blueprint authority — they are this author's judgement, priced.")
+    add("")
+    add("| Case | MOIC | IRR | Terminal debt | What it varies |")
+    add("|---|---|---|---|---|")
+    add(
+        f"| `severe-downside` | **{_turns(sv['gross_moic'])}** | **{_pct(sv['gross_irr'])}** | "
+        f"{_money(sv['terminal_debt'])} | Entry multiple, platform margin, add-on "
+        "integration, revenue decline, interest, exit mark |"
+    )
+    add(
+        f"| `integration-failure` | {_turns(itf['gross_moic'])} | {_pct(itf['gross_irr'])} | "
+        f"{_money(itf['terminal_debt'])} | The tuck-in programme alone |"
+    )
+    add("")
+    add(f"**The severe case returns {_turns(sv['gross_moic'])} — capital impairment, not")
+    add("a poor outcome.** It overpays at 7.0x, fails margin normalization (20% to")
+    add("16.5%), and breaks the add-on programme: one tuck-in underperforms, one is")
+    add("late and smaller, one never closes.")
+    add("")
+    add("`integration-failure` isolates that last driver alone, and the comparison is")
+    add("the useful part. Breaking the entire tuck-in programme costs")
+    add(f"{_turns(br['gross_moic'] - itf['gross_moic'])} of MOIC — painful, but the")
+    add(f"platform still returns {_turns(itf['gross_moic'])}. The remaining")
+    add(f"{_turns(itf['gross_moic'] - sv['gross_moic'])} of destruction in the severe")
+    add("case therefore comes from **what was paid and what the platform earns** —")
+    add("entry multiple, margin normalization, and the exit mark — not from the")
+    add("add-on programme. The buy-and-build strategy is not the fragile part;")
+    add("the entry price and the margin assumption are.")
+    add("")
+    add("> Two limits on reading this as a floor. Both cases are **author-defined**,")
+    add("> not blueprint scenarios. And neither models a covenant breach, a forced")
+    add("> sale, or the loss of a major municipal contract, so worse remains possible.")
     add("")
     ur = upside.returns
     add(
@@ -958,8 +1016,9 @@ def render_ic_summary(
     add("   rather than as a percentage of SG&A.")
     add("6. Size financing to covenant headroom with a lender, and confirm the treatment")
     add("   of synergy add-backs in covenant EBITDA.")
-    add("7. Build a downside that stresses entry multiple, margin, and integration")
-    add("   failure, not only growth and rate.")
+    add("7. Re-underwrite the `02_model/stress/severe-downside` case against real")
+    add("   diligence. The stress exists and prices capital impairment; what it lacks")
+    add("   is evidence for its inputs, and a covenant and liquidity path through it.")
     add("8. Replace synthetic operating data with the target's actual monthly data and")
     add("   re-benchmark every dashboard target.")
     add("")
@@ -1240,6 +1299,47 @@ def build_package(
         "Base, downside, and upside side by side.",
     )
 
+    # ---- 2b. Author-defined stress cases
+    # Shipped alongside the blueprint scenarios, never in place of them. The
+    # blueprint downside stresses four variables and still returns 3.58x; these
+    # vary the entry multiple, platform margin, and add-on execution, which is
+    # where capital impairment actually comes from.
+    stress_catalogue = load_scenarios(STRESS_SCENARIO_FILE)
+    stress_results: dict[str, ModelResult] = {}
+    stress_dir = model_dir / "stress"
+    for name in STRESS_ORDER:
+        scenario = stress_catalogue[name]
+        result = run_scenario(scenario)
+        stress_results[name] = result
+        write_scenario_outputs(scenario, result, stress_dir / name)
+        for filename, description in (
+            ("five_year_pro_forma.csv", "Operating, debt, and cash schedule."),
+            ("sources_and_uses.csv", "Per-closing purchase price, fees, debt, and equity."),
+            ("return_bridge.csv", "Entry equity to exit equity walk."),
+            ("sensitivity_moic.csv", "MOIC across exit multiple and organic growth."),
+            ("sensitivity_irr.csv", "IRR across exit multiple and organic growth."),
+            (
+                "sensitivity_add_on_entry.csv",
+                "Returns as a function of add-on entry multiple, against the cited 5x-6x range.",
+            ),
+            ("return_summary.json", "Headline returns and capital structure."),
+            ("assumptions.json", "Full assumption set and scenario provenance."),
+        ):
+            record(
+                f"{STRESS_DIR}/{name}/{filename}",
+                "model",
+                PROVENANCE["author"],
+                f"{name} author-defined stress — {description}",
+            )
+
+    scenario_comparison(stress_results).to_csv(stress_dir / "stress_comparison.csv", index=False)
+    record(
+        f"{STRESS_DIR}/stress_comparison.csv",
+        "model",
+        PROVENANCE["author"],
+        "Author-defined stress cases side by side. Not blueprint scenarios.",
+    )
+
     # ---- 3. Operating
     operating_frame = validate_operating_data(generate_sample_data())
     write_operating_outputs(operating_frame, operating_dir, thresholds=t)
@@ -1298,7 +1398,9 @@ def build_package(
         "KPI formulas and author-defined targets.",
     )
 
-    (reference_dir / "limitations.md").write_text(limitations_markdown(), encoding="utf-8")
+    (reference_dir / "limitations.md").write_text(
+        limitations_markdown(stress_results), encoding="utf-8"
+    )
     record(
         f"{REFERENCE_DIR}/limitations.md",
         "reference",
@@ -1309,7 +1411,12 @@ def build_package(
     # ---- 5. Narrative
     (output_dir / IC_SUMMARY_NAME).write_text(
         render_ic_summary(
-            results, selection, operating_summary, operating_exceptions, resolved_as_of
+            results,
+            stress_results,
+            selection,
+            operating_summary,
+            operating_exceptions,
+            resolved_as_of,
         ),
         encoding="utf-8",
     )

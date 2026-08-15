@@ -122,6 +122,9 @@ outputs/candidate_package/
 │                              tie disclosure, funnel
 ├── 02_model/                  base / downside / upside: pro forma, sources and
 │                              uses, return bridge, sensitivities
+│   └── stress/                author-defined severe-downside (0.99x) and
+│                              integration-failure cases, shipped alongside the
+│                              blueprint scenarios and never in place of them
 ├── 03_operating/              dashboard input data and generated KPI views
 └── 04_reference/              assumptions with provenance, KPI definitions,
                                known limitations

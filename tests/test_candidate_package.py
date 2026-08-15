@@ -30,6 +30,8 @@ from candidate_package import (
     MANIFEST_NAME,
     PROVENANCE,
     SCENARIO_ORDER,
+    STRESS_DIR,
+    STRESS_ORDER,
     Artifact,
     PackageError,
     build_package,
@@ -442,9 +444,12 @@ def test_summary_labels_all_three_scenarios(ic_summary) -> None:
 
 
 def test_summary_does_not_overstate_the_downside(ic_summary) -> None:
-    assert "should not be read as a floor" in ic_summary
+    assert "not the floor" in ic_summary
     assert "stresses only four" in ic_summary
     assert "sensitivity, not a stress test" in ic_summary
+    # The caveat is no longer the end of the story: the summary must also point
+    # at the case that does stress the return-critical drivers.
+    assert "02_model/stress/" in ic_summary
 
 
 def test_summary_discloses_synthetic_and_fixture_data(ic_summary) -> None:
@@ -499,7 +504,7 @@ def test_limitations_document_discloses_known_gaps(package) -> None:
         "fixture, not a real company",
         "Operating data is synthetic",
         "not derived from the candidate",
-        "downside case is not severe",
+        "blueprint downside is not severe",
         "modelling input, not a covenant",
         "Lender credit for synergies is assumed, not agreed",
         "Leverage is not one number",
@@ -912,3 +917,79 @@ def test_benchmark_table_marks_unbenchmarked_inputs_honestly(package) -> None:
 def test_summary_points_at_the_benchmark_table(ic_summary) -> None:
     assert "assumption_benchmarks.csv" in ic_summary
     assert "below current market" in ic_summary
+
+
+# ---------------------------------------------------------------------------
+# Author-defined stress cases.
+#
+# The blueprint downside stresses four variables and still returns 3.58x. These
+# cases vary the entry multiple, platform margin, and add-on execution. They
+# ship alongside the blueprint scenarios and must never be presented as
+# blueprint authority, so provenance is asserted as tightly as the numbers.
+# ---------------------------------------------------------------------------
+
+
+def test_stress_cases_are_shipped_in_the_package(package) -> None:
+    stress_dir = package.output_dir / "02_model" / "stress"
+    assert stress_dir.is_dir()
+    for name in STRESS_ORDER:
+        assert (stress_dir / name / "return_summary.json").exists()
+    assert (stress_dir / "stress_comparison.csv").exists()
+
+
+def test_stress_artifacts_are_labelled_author_defined(manifest) -> None:
+    entries = [a for a in manifest["artifacts"] if a["path"].startswith(f"{STRESS_DIR}/")]
+    assert entries, "no stress artifacts recorded in the manifest"
+    assert {a["provenance"] for a in entries} == {PROVENANCE["author"]}
+
+
+def test_stress_cases_do_not_displace_the_blueprint_scenarios(package, manifest) -> None:
+    # The shipped `downside` is the blueprint's IC guardrail case. Adding a
+    # harsher author-defined case must not quietly replace it.
+    assert SCENARIO_ORDER == ("base", "downside", "upside")
+    for name in SCENARIO_ORDER:
+        assert (package.output_dir / "02_model" / name / "return_summary.json").exists()
+    blueprint = [
+        a
+        for a in manifest["artifacts"]
+        if a["path"].startswith("02_model/downside/") and not a["path"].startswith(STRESS_DIR)
+    ]
+    assert blueprint
+    assert {a["provenance"] for a in blueprint} == {PROVENANCE["modelled"]}
+
+
+def test_severe_downside_prices_capital_impairment(package) -> None:
+    summary = json.loads(
+        (
+            package.output_dir / "02_model" / "stress" / "severe-downside" / "return_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    # The point of the case: equity is impaired, not merely disappointing.
+    assert summary["gross_moic"] < 1.0
+    assert summary["gross_irr"] < 0.0
+
+
+def test_summary_quotes_the_severe_case_from_the_model(package, ic_summary) -> None:
+    """The narrative figure must be the generated one, not a typed constant."""
+    summary = json.loads(
+        (
+            package.output_dir / "02_model" / "stress" / "severe-downside" / "return_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert f"{summary['gross_moic']:.2f}x" in ic_summary
+    assert "02_model/stress/" in ic_summary
+
+
+def test_summary_no_longer_asks_for_a_stress_that_already_exists(ic_summary) -> None:
+    # Recommendation 7 used to read "Build a downside that stresses entry
+    # multiple, margin, and integration failure" — which by then existed.
+    assert "Build a downside that stresses" not in ic_summary
+
+
+def test_limitations_records_the_stress_and_its_limits(package) -> None:
+    text = (package.output_dir / "04_reference" / "limitations.md").read_text(encoding="utf-8")
+    assert "02_model/stress/" in text
+    # Still honest in both directions: the stress exists, and it is not a floor.
+    assert "author-defined" in text
+    assert "not a guaranteed lower bound" in text
+    assert "This remains the most" not in text
