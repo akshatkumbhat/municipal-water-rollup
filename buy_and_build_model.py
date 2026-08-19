@@ -21,6 +21,8 @@ import argparse
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields, replace
+from itertools import combinations as _combinations
+from math import factorial as _factorial
 from pathlib import Path
 from typing import Any
 
@@ -909,6 +911,178 @@ def write_scenario_outputs(scenario: Scenario, result: ModelResult, output_dir: 
         ),
         encoding="utf-8",
     )
+
+
+def severe_driver_groups() -> tuple[DriverGroup, ...]:
+    """The six groups the base-to-severe loss is decomposed into.
+
+    Chosen for interpretability, not for parameter tidiness. Together they must
+    partition every difference between the base and severe cases exactly — a
+    test asserts the full coalition reproduces the severe scenario — so nothing
+    is silently excluded from the attribution.
+
+    Integration bundles the damaged acquisition schedule with synergy capture
+    and its first-year realization, because the underwriting question is
+    "how much of this was integration?" and synergy delivery is integration.
+    Separating them was the error that made the previous attribution invalid.
+    """
+    return (
+        DriverGroup("Organic growth", {"annual_organic_growth": -0.03}),
+        DriverGroup("Entry valuation", {"platform_entry_multiple": 7.0}),
+        DriverGroup(
+            "Platform profitability",
+            {"platform_ebitda_margin": 0.165, "platform_margin_expansion_bps_per_year": 0},
+            note=(
+                "Current-model attribution only. The platform-margin parameter also "
+                "changes implied entry purchase price and opening leverage, so this "
+                "component is NOT a clean estimate of normalized-EBITDA risk."
+            ),
+        ),
+        DriverGroup(
+            "Integration / add-on execution",
+            {"sgna_synergy_capture": 0.05, "first_year_synergy_realization": 0.25},
+            use_stressed_add_ons=True,
+        ),
+        DriverGroup("Financing", {"interest_rate": 0.105}),
+        DriverGroup("Exit valuation", {"terminal_multiple": 5.0}),
+    )
+
+
+@dataclass(frozen=True)
+class DriverGroup:
+    """One economically named bundle of stresses, decomposed as a unit.
+
+    Groups are named for the underwriting question, not for the parameters
+    underneath them: a reader asks "how much of this was integration?", not
+    "how much was `sgna_synergy_capture`?". `overrides` are applied to the base
+    assumptions; `use_stressed_add_ons` swaps in the stressed acquisition
+    schedule, which cannot be expressed as an assumption override.
+    """
+
+    name: str
+    overrides: Mapping[str, Any]
+    use_stressed_add_ons: bool = False
+    note: str = ""
+
+    @property
+    def parameters(self) -> str:
+        """Exactly what this group contains, so the grouping is auditable."""
+        parts = [f"{k}={v}" for k, v in sorted(self.overrides.items())]
+        if self.use_stressed_add_ons:
+            parts.append("add_ons=stressed schedule")
+        return "; ".join(parts)
+
+
+def _coalition_scenario(
+    base: Scenario, stressed: Scenario, groups: Sequence[DriverGroup], members: frozenset[int]
+) -> Scenario:
+    """Base case with exactly the stresses of `members` applied."""
+    overrides: dict[str, Any] = {}
+    add_ons = base.add_ons
+    for index in sorted(members):
+        group = groups[index]
+        overrides.update(group.overrides)
+        if group.use_stressed_add_ons:
+            add_ons = stressed.add_ons
+    return replace(base, assumptions=replace(base.assumptions, **overrides), add_ons=add_ons)
+
+
+def shapley_attribution(
+    base: Scenario,
+    stressed: Scenario,
+    groups: Sequence[DriverGroup],
+    *,
+    metric: str = "gross_moic",
+) -> pd.DataFrame:
+    """Order-independent attribution of the base-to-stressed loss in `metric`.
+
+    One-at-a-time perturbation cannot attribute this loss: the stresses are
+    strongly non-additive, so isolated effects neither sum to the endpoint
+    difference nor support residualizing one bundle against another. The Shapley
+    value is the unique attribution that is order-independent, gives an unused
+    driver exactly zero, and sums to the total — the three properties an
+    underwriting reader is entitled to assume.
+
+    Evaluated exhaustively over all 2**n coalitions, so the result is exact
+    rather than sampled. Callers should keep n small enough to stay interpretable.
+    """
+    if not groups:
+        raise ValueError("shapley_attribution requires at least one driver group.")
+
+    # Groups must be disjoint. If two touched the same assumption, the value of a
+    # coalition would depend on the order overrides were applied, and the result
+    # would not be order-independent — the one property that makes it meaningful.
+    seen: dict[str, str] = {}
+    for group in groups:
+        for parameter in group.overrides:
+            if parameter in seen:
+                raise ValueError(
+                    f"Driver groups must not overlap: {parameter!r} appears in both "
+                    f"{seen[parameter]!r} and {group.name!r}."
+                )
+            seen[parameter] = group.name
+
+    n = len(groups)
+    cache: dict[frozenset[int], float] = {}
+
+    def value(members: frozenset[int]) -> float:
+        """Loss in `metric` relative to base when `members` are stressed."""
+        if members not in cache:
+            scenario = _coalition_scenario(base, stressed, groups, members)
+            cache[members] = base_metric - float(run_scenario(scenario).returns[metric])
+        return cache[members]
+
+    base_metric = float(run_scenario(base).returns[metric])
+    weights = {
+        size: _factorial(size) * _factorial(n - size - 1) / _factorial(n) for size in range(n)
+    }
+
+    rows = []
+    for index, group in enumerate(groups):
+        others = [i for i in range(n) if i != index]
+        contribution = 0.0
+        for size in range(n):
+            for subset in _combinations(others, size):
+                members = frozenset(subset)
+                marginal = value(members | {index}) - value(members)
+                contribution += weights[size] * marginal
+        rows.append(
+            {"Driver": group.name, "Contribution": contribution, "Contains": group.parameters}
+        )
+
+    total = value(frozenset(range(n)))
+    frame = pd.DataFrame(rows)
+    frame["Share of total"] = frame["Contribution"] / total
+    frame.insert(0, "Metric", metric)
+    return frame
+
+
+def one_at_a_time_diagnostic(
+    base: Scenario,
+    stressed: Scenario,
+    groups: Sequence[DriverGroup],
+    *,
+    metric: str = "gross_moic",
+) -> pd.DataFrame:
+    """Isolated effect of each group, published as a non-additivity check.
+
+    This is a diagnostic, never an attribution. Its purpose is to show, by how
+    badly the isolated losses overshoot the endpoint loss, that the stresses
+    overlap and cannot be added or residualized.
+    """
+    base_metric = float(run_scenario(base).returns[metric])
+    rows = []
+    for index, group in enumerate(groups):
+        scenario = _coalition_scenario(base, stressed, groups, frozenset({index}))
+        alone = float(run_scenario(scenario).returns[metric])
+        rows.append(
+            {
+                "Driver": group.name,
+                f"{metric} when applied alone": alone,
+                "Isolated loss": base_metric - alone,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def scenario_comparison(results: Mapping[str, ModelResult]) -> pd.DataFrame:

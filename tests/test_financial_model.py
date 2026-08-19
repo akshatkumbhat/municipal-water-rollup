@@ -12,15 +12,19 @@ from buy_and_build_model import (
     SCENARIOS,
     AddOn,
     Assumptions,
+    DriverGroup,
     ModelResult,
     add_on_entry_sensitivity,
     build_model,
     load_scenarios,
+    one_at_a_time_diagnostic,
     return_bridge,
     run_scenario,
     scenario_comparison,
     sensitivity_axes,
     sensitivity_grid,
+    severe_driver_groups,
+    shapley_attribution,
     solve_irr,
     sources_and_uses,
     write_scenario_outputs,
@@ -837,3 +841,108 @@ def test_blended_entry_multiple_rises_with_add_on_price() -> None:
     table = add_on_entry_sensitivity(DEFAULT_ASSUMPTIONS, DEFAULT_ADDONS)
     blended = list(table["Blended Entry Multiple"])
     assert blended == sorted(blended)
+
+
+# ---------------------------------------------------------------------------
+# Driver attribution.
+#
+# These exist because an earlier version of the IC summary inferred which
+# drivers caused the severe case's loss by subtracting one bundled scenario
+# from another. That is not an attribution, and nothing in the suite caught it.
+# The properties below are the ones an underwriting reader is entitled to
+# assume of any number presented as a driver contribution.
+# ---------------------------------------------------------------------------
+
+
+def _severe() -> object:
+    from pathlib import Path
+
+    return load_scenarios(Path("examples/scenarios.json"))["severe-downside"]
+
+
+def test_driver_groups_reproduce_both_endpoints_exactly() -> None:
+    """Nothing may be silently excluded from the decomposition."""
+    from buy_and_build_model import _coalition_scenario
+
+    base, severe, groups = SCENARIOS["base"], _severe(), severe_driver_groups()
+
+    empty = _coalition_scenario(base, severe, groups, frozenset())
+    assert empty.assumptions == base.assumptions
+    assert empty.add_ons == base.add_ons
+
+    full = _coalition_scenario(base, severe, groups, frozenset(range(len(groups))))
+    assert full.assumptions == severe.assumptions, "groups do not partition the stress"
+    assert full.add_ons == severe.add_ons
+
+
+def test_shapley_contributions_sum_to_the_endpoint_loss() -> None:
+    base, severe, groups = SCENARIOS["base"], _severe(), severe_driver_groups()
+    frame = shapley_attribution(base, severe, groups)
+
+    endpoint = run_scenario(base).returns["gross_moic"] - run_scenario(severe).returns["gross_moic"]
+    assert frame["Contribution"].sum() == pytest.approx(endpoint, abs=TOL)
+    assert frame["Share of total"].sum() == pytest.approx(1.0, abs=TOL)
+
+
+def test_shapley_is_invariant_to_group_order() -> None:
+    """Order-independence is the property that makes this an attribution."""
+    base, severe, groups = SCENARIOS["base"], _severe(), severe_driver_groups()
+
+    forward = shapley_attribution(base, severe, groups)
+    reversed_ = shapley_attribution(base, severe, tuple(reversed(groups)))
+
+    a = dict(zip(forward["Driver"], forward["Contribution"], strict=True))
+    b = dict(zip(reversed_["Driver"], reversed_["Contribution"], strict=True))
+    assert a.keys() == b.keys()
+    for driver, value in a.items():
+        assert value == pytest.approx(b[driver], abs=TOL), driver
+
+
+def test_an_unstressed_driver_contributes_exactly_zero() -> None:
+    """A dummy group identical in base and stressed must attract no blame."""
+    base, severe = SCENARIOS["base"], _severe()
+    dummy = DriverGroup("Dummy (stresses nothing)", {})
+    groups = (*severe_driver_groups(), dummy)
+
+    frame = shapley_attribution(base, severe, groups)
+    contribution = frame.loc[frame["Driver"] == dummy.name, "Contribution"].iloc[0]
+    assert contribution == pytest.approx(0.0, abs=TOL)
+
+
+def test_shapley_rejects_an_empty_group_set() -> None:
+    with pytest.raises(ValueError, match="at least one driver group"):
+        shapley_attribution(SCENARIOS["base"], _severe(), ())
+
+
+def test_shapley_rejects_overlapping_groups() -> None:
+    """Two groups touching one parameter would make coalitions order-dependent."""
+    overlapping = (
+        DriverGroup("A", {"annual_organic_growth": -0.03}),
+        DriverGroup("B", {"annual_organic_growth": 0.0}),
+    )
+    with pytest.raises(ValueError, match="must not overlap"):
+        shapley_attribution(SCENARIOS["base"], _severe(), overlapping)
+
+
+def test_one_at_a_time_overshoots_and_is_therefore_not_an_attribution() -> None:
+    """The diagnostic's whole purpose: isolated losses do not sum to the total."""
+    base, severe, groups = SCENARIOS["base"], _severe(), severe_driver_groups()
+
+    isolated = one_at_a_time_diagnostic(base, severe, groups)["Isolated loss"].sum()
+    endpoint = run_scenario(base).returns["gross_moic"] - run_scenario(severe).returns["gross_moic"]
+    assert isolated > endpoint * 1.2, "if these ever agree, the non-additivity note is wrong"
+
+
+def test_lower_entry_margin_currently_raises_moic() -> None:
+    """Documents the modelling defect the attribution caveat warns about.
+
+    Purchase price and opening debt both derive from the assumed entry margin,
+    so cutting the margin alone buys the business cheaper. Until a fixed-dollar
+    purchase-price mode exists, the model cannot express a diligence miss, and
+    no margin-fragility claim may rest on this parameter. Delete this test when
+    that mode lands.
+    """
+    base = SCENARIOS["base"]
+    cheaper = replace(base, assumptions=replace(base.assumptions, platform_ebitda_margin=0.165))
+
+    assert run_scenario(cheaper).returns["gross_moic"] > run_scenario(base).returns["gross_moic"]

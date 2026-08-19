@@ -55,9 +55,12 @@ from buy_and_build_model import (
     ModelResult,
     Scenario,
     load_scenarios,
+    one_at_a_time_diagnostic,
     return_bridge,
     run_scenario,
     scenario_comparison,
+    severe_driver_groups,
+    shapley_attribution,
     sources_and_uses,
     write_scenario_outputs,
 )
@@ -635,6 +638,8 @@ def _by_unit(value: float, unit: str) -> str:
 def render_ic_summary(
     results: dict[str, ModelResult],
     stress: dict[str, ModelResult],
+    attribution: pd.DataFrame,
+    oat: pd.DataFrame,
     targets: pd.DataFrame,
     selection: CandidateSelection,
     operating_kpis: pd.DataFrame,
@@ -1079,8 +1084,41 @@ def render_ic_summary(
     add("> `integration-failure` leaves at base, so the pair never isolated integration.")
     add("> The residual it produced also silently contained organic growth and the")
     add("> interest rate. Subtracting one bundled counterfactual from another does not")
-    add("> yield an attribution. **No relative-risk attribution is asserted here until")
-    add("> the driver decomposition described below is regenerated.**")
+    add("> yield an attribution. It is replaced by the decomposition below.")
+    add("")
+    add("### What actually destroys the value  `author`-defined")
+    add("")
+    base_moic = float(base.returns["gross_moic"])
+    total_loss = base_moic - float(sv["gross_moic"])
+    add(f"The severe case loses {_turns(total_loss)} of MOIC against the base case. The")
+    add("stresses are strongly non-additive, so no isolated or residual figure can")
+    add("apportion that loss. The table below is a **Shapley decomposition** over six")
+    add("driver groups: order-independent, zero for any driver left unstressed, and")
+    add("summing exactly to the endpoint loss. Source:")
+    add("`02_model/stress/driver_attribution.csv`.")
+    add("")
+    add("| Driver group | MOIC destroyed | Share |")
+    add("|---|---:|---:|")
+    for _, row in attribution.sort_values("Contribution", ascending=False).iterrows():
+        add(f"| {row['Driver']} | {row['Contribution']:.2f}x | {row['Share of total']:.0%} |")
+    add(f"| **Total** | **{attribution['Contribution'].sum():.2f}x** | **100%** |")
+    add("")
+    add("> **The platform-profitability figure is not a clean read.** In this model the")
+    add("> platform's purchase price and opening debt are both derived from the assumed")
+    add("> entry EBITDA margin, so lowering that margin also lowers what is paid for the")
+    add("> business. Applied alone it *raises* MOIC. This component therefore measures")
+    add("> a repricing, **not** the normalized-EBITDA risk an underwriter cares about —")
+    add("> paying a fixed dollar price and then discovering lower EBITDA. Modelling that")
+    add("> properly requires a fixed-dollar purchase-price mode, which does not yet")
+    add("> exist here, so no conclusion about margin fragility is drawn from this row.")
+    add("")
+    add("Read against the retracted claim: **integration is not secondary.** It sits")
+    add("within a few hundredths of a turn of entry valuation and exit valuation, and")
+    add("the largest single driver is organic growth, which the earlier reasoning")
+    add("never mentioned. `02_model/stress/driver_attribution_oat.csv` records the")
+    add("isolated one-at-a-time losses purely as a non-additivity check: they total")
+    add(f"{oat['Isolated loss'].sum():.2f}x against {total_loss:.2f}x of actual")
+    add("destruction, which is why they must not be added or residualized.")
     add("")
     add("> Two limits on reading this as a floor. Both cases are **author-defined**,")
     add("> not blueprint scenarios. And neither models a covenant breach, a forced")
@@ -1462,6 +1500,29 @@ def build_package(
         "Author-defined stress cases side by side. Not blueprint scenarios.",
     )
 
+    # ---- 2c. Driver attribution for the severe case
+    # Replaces an invalid attribution that residualized one bundled scenario
+    # against another. Shapley is order-independent, sums to the endpoint loss,
+    # and gives an unused driver exactly zero.
+    groups = severe_driver_groups()
+    severe_scenario = stress_catalogue["severe-downside"]
+    attribution = shapley_attribution(SCENARIOS["base"], severe_scenario, groups)
+    attribution.to_csv(stress_dir / "driver_attribution.csv", index=False)
+    record(
+        f"{STRESS_DIR}/driver_attribution.csv",
+        "model",
+        PROVENANCE["author"],
+        "Shapley attribution of the base-to-severe MOIC loss across six driver groups.",
+    )
+    oat = one_at_a_time_diagnostic(SCENARIOS["base"], severe_scenario, groups)
+    oat.to_csv(stress_dir / "driver_attribution_oat.csv", index=False)
+    record(
+        f"{STRESS_DIR}/driver_attribution_oat.csv",
+        "model",
+        PROVENANCE["author"],
+        "One-at-a-time isolated losses. A non-additivity diagnostic, not an attribution.",
+    )
+
     # ---- 3. Operating
     operating_frame = validate_operating_data(generate_sample_data())
     write_operating_outputs(operating_frame, operating_dir, thresholds=t)
@@ -1535,6 +1596,8 @@ def build_package(
         render_ic_summary(
             results,
             stress_results,
+            attribution,
+            oat,
             targets,
             selection,
             operating_summary,

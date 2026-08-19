@@ -1114,4 +1114,33 @@ def test_no_attribution_is_inferred_by_subtracting_bundled_scenarios(ic_summary)
     ):
         assert banned not in ic_summary, f"invalid attribution phrasing returned: {banned}"
     assert "Retraction" in ic_summary
-    assert "No relative-risk attribution is asserted" in ic_summary
+    # The retraction is now backed by a real decomposition, not a holding note.
+    assert "Shapley decomposition" in ic_summary
+    assert "driver_attribution.csv" in ic_summary
+
+
+def test_attribution_artifacts_ship_and_reconcile(package, manifest) -> None:
+    stress = package.output_dir / "02_model" / "stress"
+    shapley = pd.read_csv(stress / "driver_attribution.csv")
+    oat = pd.read_csv(stress / "driver_attribution_oat.csv")
+
+    base = json.loads(
+        (package.output_dir / "02_model" / "base" / "return_summary.json").read_text()
+    )
+    severe = json.loads((stress / "severe-downside" / "return_summary.json").read_text())
+    endpoint = base["gross_moic"] - severe["gross_moic"]
+
+    assert shapley["Contribution"].sum() == pytest.approx(endpoint, abs=1e-9)
+    assert oat["Isolated loss"].sum() > endpoint, "diagnostic must show non-additivity"
+
+    listed = {a["path"] for a in manifest["artifacts"]}
+    assert "02_model/stress/driver_attribution.csv" in listed
+    assert "02_model/stress/driver_attribution_oat.csv" in listed
+
+
+def test_margin_contamination_is_flagged_beside_the_table(ic_summary) -> None:
+    """The caveat must sit with the number, not be buried in limitations."""
+    assert "not a clean read" in ic_summary
+    assert "fixed-dollar purchase-price mode" in ic_summary
+    body = ic_summary.split("### What actually destroys the value")[1]
+    assert "not a clean read" in body.split("## 9.")[0]
