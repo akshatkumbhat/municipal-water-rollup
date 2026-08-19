@@ -1096,3 +1096,22 @@ def test_saturation_is_named_as_an_instrument_limitation(package, ic_summary) ->
 def test_score_distribution_rejects_an_unscored_universe() -> None:
     with pytest.raises(PackageError, match="no scores present"):
         score_distribution(pd.DataFrame({"priority_score": [None, None]}))
+
+
+def test_no_attribution_is_inferred_by_subtracting_bundled_scenarios(ic_summary) -> None:
+    """`severe-downside` minus `integration-failure` is not an attribution.
+
+    The two differ by more than the add-on programme: severe also degrades
+    synergy capture and first-year realization, and its residual carries organic
+    growth and the interest rate. An earlier version of section 8 subtracted one
+    from the other and ranked risks with the result. Guard the retraction.
+    """
+    for banned in (
+        "not the fragile part",
+        "entire tuck-in programme",
+        "inverts the usual",
+        "isolates that last driver",
+    ):
+        assert banned not in ic_summary, f"invalid attribution phrasing returned: {banned}"
+    assert "Retraction" in ic_summary
+    assert "No relative-risk attribution is asserted" in ic_summary

@@ -15,7 +15,7 @@ the method turns on itself.
 
 | | Open | Why it matters |
 |---|---|---|
-| 1 | `IC_SUMMARY.md` §8 — *Downside* | The severe case returns **0.99x MOIC / −0.2% IRR**: the equity is impaired, not merely disappointing. Breaking the *entire* add-on programme costs only 0.85x — so most of the destruction comes from the entry price and the margin assumption, not from integration failure. That inverts the usual buy-and-build worry. |
+| 1 | `IC_SUMMARY.md` §8 — *Downside* | The severe case returns **0.99x MOIC / −0.2% IRR**: the equity is impaired, not merely disappointing. The section also carries a retraction — an earlier version inferred which drivers caused that loss by subtracting one bundled scenario from another, which is not a valid attribution. No relative-risk claim is asserted pending an order-independent decomposition. |
 | 2 | `IC_SUMMARY.md` — *What the evidence actually supports* | Of 8 material model inputs checked against published sources, **none** has peer-reviewed or government support. Three sit outside their cited range in the direction that flatters returns. |
 | 3 | `01_sourcing/score_distribution.csv` | The screening score saturates: 17 of 54 targets sit within five points of the maximum, so it goes flat exactly where a shortlist has to be cut. Recorded as an instrument-design limitation, not written off as a fixture artifact. |
 
