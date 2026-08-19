@@ -106,7 +106,12 @@ SCENARIO_ORDER = ("base", "downside", "upside")
 # package labels them author-defined wherever they appear.
 STRESS_DIR = f"{MODEL_DIR}/stress"
 STRESS_SCENARIO_FILE = Path(__file__).resolve().parent / "examples" / "scenarios.json"
-STRESS_ORDER = ("severe-downside", "integration-failure")
+STRESS_ORDER = (
+    "severe-downside",
+    "integration-failure",
+    "diligence-miss",
+    "operating-miss",
+)
 
 # PROJECT_BLUEPRINT.md anchor-platform profile: 15-60 technicians/operators.
 ANCHOR_TECHNICIAN_MIN = 15
@@ -1103,20 +1108,34 @@ def render_ic_summary(
         add(f"| {row['Driver']} | {row['Contribution']:.2f}x | {row['Share of total']:.0%} |")
     add(f"| **Total** | **{attribution['Contribution'].sum():.2f}x** | **100%** |")
     add("")
-    add("> **The platform-profitability figure is not a clean read.** In this model the")
-    add("> platform's purchase price and opening debt are both derived from the assumed")
-    add("> entry EBITDA margin, so lowering that margin also lowers what is paid for the")
-    add("> business. Applied alone it *raises* MOIC. This component therefore measures")
-    add("> a repricing, **not** the normalized-EBITDA risk an underwriter cares about —")
-    add("> paying a fixed dollar price and then discovering lower EBITDA. Modelling that")
-    add("> properly requires a fixed-dollar purchase-price mode, which does not yet")
-    add("> exist here, so no conclusion about margin fragility is drawn from this row.")
+    add("**Platform profitability is now a clean read, and it changed the answer.**")
+    add("Until recently this model derived the platform's purchase price and opening")
+    add("debt from the same parameter as its earnings, so cutting the margin also cut")
+    add("what was paid — applied alone it *raised* MOIC, and the decomposition scored")
+    add("margin risk at a misleading 5% of the loss. Pricing is now struck on an")
+    add("`underwritten_ebitda_margin` held at the believed level while realized margin")
+    add("falls, which is what a diligence miss actually is: the price and the debt are")
+    add("already fixed when the lower EBITDA appears. The severe case's effective entry")
+    add(f"multiple is therefore {sv['effective_platform_entry_multiple']:.2f}x, not the")
+    add(f"{sv['underwritten_platform_entry_multiple']:.1f}x it was struck at, and true")
+    add(f"opening leverage {_turns(sv['gross_leverage_at_close'])} rather than 3.00x.")
     add("")
-    add("Read against the retracted claim: **integration is not secondary.** It sits")
-    add("within a few hundredths of a turn of entry valuation and exit valuation, and")
-    add("the largest single driver is organic growth, which the earlier reasoning")
-    add("never mentioned. `02_model/stress/driver_attribution_oat.csv` records the")
-    add("isolated one-at-a-time losses purely as a non-additivity check: they total")
+    add("Two consequences the committee should note. **The previous severe case")
+    add("understated the loss**, because its margin stress was quietly repricing the")
+    add("acquisition downward. And **margin is now the second-largest driver**, behind")
+    add("only organic growth — the opposite of what the contaminated table implied.")
+    add("`diligence-miss` and `operating-miss` in `02_model/stress/` separate the two")
+    add("failures: a price struck on EBITDA that was not there, versus a business")
+    add("correctly priced that subsequently earns less. They are not equally")
+    add("recoverable and should not be underwritten as one risk.")
+    add("")
+    add("Read against the retracted claim: **integration is not secondary, and neither")
+    add("is it dominant.** It sits inside a narrow band with exit and entry valuation,")
+    add("while the largest single driver is organic growth — which the earlier")
+    add("reasoning never mentioned at all.")
+    add("")
+    add("`02_model/stress/driver_attribution_oat.csv` records the isolated")
+    add("one-at-a-time losses purely as a non-additivity check: they total")
     add(f"{oat['Isolated loss'].sum():.2f}x against {total_loss:.2f}x of actual")
     add("destruction, which is why they must not be added or residualized.")
     add("")

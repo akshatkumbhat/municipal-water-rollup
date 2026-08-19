@@ -19,13 +19,14 @@
       "source": "Author-defined severe downside. NOT the blueprint downside. Built because the blueprint IC guardrail case varies only growth, synergy capture, interest, and the exit mark, and still returns 3.58x, exploring a narrow band of outcomes. This is a modeled capital-impairment case, not a guaranteed lower bound: worse outcomes remain possible.",
       "_stress_rationale": {
         "platform_entry_multiple": "6.0x -> 7.0x. Competitive process; we bid up to win.",
-        "platform_ebitda_margin": "20% -> 16.5%. Owner add-backs did not hold and prevailing-wage exposure was understated at diligence.",
+        "platform_ebitda_margin": "20% -> 16.5% REALIZED, against 20% UNDERWRITTEN. Owner add-backs did not hold and prevailing-wage exposure was understated at diligence. The price and the debt are already struck at the believed 20%, so this is a diligence miss: the effective entry multiple rises to 8.5x and true opening leverage to 3.6x. Before underwritten_ebitda_margin existed, cutting the margin also cut the purchase price, so this case UNDERSTATED the loss at 0.99x.",
         "platform_margin_expansion_bps_per_year": "50 -> 0. The operational improvement thesis does not land.",
-        "annual_organic_growth": "+5% -> -3%. Loss of a major municipal contract plus budget deferrals across the base. Modelled as post-close decline rather than a smaller platform at entry. Under this model's construction — fixed absolute add-on sizes and an unchanged entry multiple — shrinking the platform raises modeled MOIC, because the lower-multiple add-ons contribute a larger share of a smaller deal. That is an artefact of those held-constant inputs, not a general finding that smaller platforms return more.",
+        "annual_organic_growth": "+5% -> -3%. Loss of a major municipal contract plus budget deferrals across the base. Modelled as post-close decline rather than a smaller platform at entry. Under this model's construction \u2014 fixed absolute add-on sizes and an unchanged entry multiple \u2014 shrinking the platform raises modeled MOIC, because the lower-multiple add-ons contribute a larger share of a smaller deal. That is an artefact of those held-constant inputs, not a general finding that smaller platforms return more.",
         "sgna_synergy_capture": "15% -> 5%, realization 50% -> 25%. Integration takes longer and delivers less.",
         "interest_rate": "8.0% -> 10.5%. Credit conditions tighten as performance deteriorates.",
         "terminal_multiple": "6.5x -> 5.0x. A shrinking, lower-margin platform does not earn a scaled-platform re-rating.",
-        "add_ons": "Add-on A closes but underperforms its margin case (18% -> 13%); Add-on B closes a year late and smaller; Add-on C never closes."
+        "add_ons": "Add-on A closes but underperforms its margin case (18% -> 13%); Add-on B closes a year late and smaller; Add-on C never closes.",
+        "underwritten_ebitda_margin": "Held at 20%: what the deal was priced and levered on. Without it, a margin stress silently reprices the acquisition and flatters returns."
       },
       "assumptions": {
         "platform_entry_multiple": 7.0,
@@ -35,7 +36,8 @@
         "sgna_synergy_capture": 0.05,
         "first_year_synergy_realization": 0.25,
         "interest_rate": 0.105,
-        "terminal_multiple": 5.0
+        "terminal_multiple": 5.0,
+        "underwritten_ebitda_margin": 0.2
       },
       "add_ons": [
         {
@@ -103,6 +105,32 @@
         "initial_debt_to_ebitda": 2.5,
         "max_pro_forma_leverage": 2.5,
         "leverage_synergy_addback_fraction": 1.0
+      }
+    },
+    {
+      "name": "diligence-miss",
+      "description": "Normalized EBITDA is revised down after close. Price and debt are already fixed.",
+      "source": "Author-defined single-driver case. Isolates the risk the model could not express before underwritten_ebitda_margin existed.",
+      "_stress_rationale": {
+        "platform_ebitda_margin": "20% -> 16.5% realized.",
+        "underwritten_ebitda_margin": "Held at 20%: the basis the price and debt were struck on.",
+        "note": "Everything else at base. Purchase price and opening debt are unchanged in dollars; the effective entry multiple and true opening leverage rise instead."
+      },
+      "assumptions": {
+        "platform_ebitda_margin": 0.165,
+        "underwritten_ebitda_margin": 0.2
+      }
+    },
+    {
+      "name": "operating-miss",
+      "description": "Correctly priced business that subsequently earns lower margins.",
+      "source": "Author-defined single-driver case. The counterpart to diligence-miss: entry economics are honest, the earnings stream degrades.",
+      "_stress_rationale": {
+        "platform_margin_expansion_bps_per_year": "+50 -> -100 bps a year. Margin erodes post-close rather than expanding.",
+        "note": "Entry EBITDA was correct, so the price paid and the effective entry multiple are both honest. Distinguishing this from diligence-miss is the point: they are different failures and they are not equally recoverable."
+      },
+      "assumptions": {
+        "platform_margin_expansion_bps_per_year": -100
       }
     }
   ]

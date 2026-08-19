@@ -80,6 +80,19 @@ class Assumptions:
     # agreements vary widely and typically cap add-backs, require documented
     # actions, and impose realization windows and look-forward limits.
     leverage_synergy_addback_fraction: float = 0.0
+    # The margin the deal was PRICED on, which may differ from the margin the
+    # business actually earns. Defaults to None, meaning "the same as
+    # platform_ebitda_margin" — the ordinary case, and the current behaviour.
+    #
+    # Setting it separates the EBITDA that fixes the purchase price and sizes
+    # opening debt from the EBITDA that shows up in the operating schedule.
+    # Without that split, platform_ebitda_margin is an input to *price* as well
+    # as to *earnings*, so cutting it buys the business proportionally cheaper
+    # and raises MOIC — the opposite of the risk an underwriter carries. A
+    # diligence miss is `underwritten_ebitda_margin=0.20` with
+    # `platform_ebitda_margin=0.165`: the price and the debt are already struck
+    # at the believed number, and only the earnings are revised down.
+    underwritten_ebitda_margin: float | None = None
 
 
 DEFAULT_ADDONS = (
@@ -203,6 +216,8 @@ def validate_assumptions(a: Assumptions, add_ons: Iterable[AddOn]) -> None:
     for field_name in _POSITIVE_FIELDS:
         if getattr(a, field_name) <= 0:
             raise ValueError(f"{field_name} must be positive")
+    if a.underwritten_ebitda_margin is not None and not 0 < a.underwritten_ebitda_margin < 1:
+        raise ValueError("underwritten_ebitda_margin must be between 0 and 1 when set")
     if a.initial_debt_to_ebitda < 0:
         raise ValueError("initial_debt_to_ebitda must not be negative")
     if a.initial_debt_to_ebitda > a.max_pro_forma_leverage:
@@ -325,11 +340,26 @@ def build_model(
     validate_assumptions(assumptions, add_ons)
     a = assumptions
 
-    platform_ebitda_at_close = a.platform_revenue * a.platform_ebitda_margin
-    platform_ev = platform_ebitda_at_close * a.platform_entry_multiple
+    # Price and debt are struck on the UNDERWRITTEN margin; the operating
+    # schedule below runs on the REALIZED one. They are equal unless a
+    # diligence miss is being modelled, in which case the price paid and the
+    # debt drawn are already fixed when the lower EBITDA comes to light.
+    underwritten_margin = (
+        a.platform_ebitda_margin
+        if a.underwritten_ebitda_margin is None
+        else a.underwritten_ebitda_margin
+    )
+    underwritten_ebitda_at_close = a.platform_revenue * underwritten_margin
+    platform_ev = underwritten_ebitda_at_close * a.platform_entry_multiple
     platform_fees = platform_ev * a.transaction_fee_pct_ev
-    initial_debt = platform_ebitda_at_close * a.initial_debt_to_ebitda
+    initial_debt = underwritten_ebitda_at_close * a.initial_debt_to_ebitda
     initial_equity = platform_ev + platform_fees - initial_debt
+
+    # What the platform actually earns at close. Every downstream entry metric
+    # divides by this, so `blended_entry_multiple` and `gross_leverage_at_close`
+    # report the EFFECTIVE multiple and TRUE opening leverage rather than the
+    # headline ones the deal was struck at.
+    platform_ebitda_at_close = a.platform_revenue * a.platform_ebitda_margin
 
     funding: list[FundingEvent] = [
         FundingEvent(
@@ -503,6 +533,16 @@ def build_model(
         "total_sponsor_equity_invested": total_equity_invested,
         "blended_entry_multiple": blended_entry_multiple,
         "entry_ebitda": total_entry_ebitda,
+        # Equal to the headline platform multiple unless the deal was priced on
+        # an EBITDA the business does not earn. When they diverge, the effective
+        # figure is what the sponsor actually paid per turn of real earnings.
+        "underwritten_platform_entry_multiple": a.platform_entry_multiple,
+        "effective_platform_entry_multiple": (
+            platform_ev / platform_ebitda_at_close if platform_ebitda_at_close else float("nan")
+        ),
+        "underwritten_ebitda_at_close": underwritten_ebitda_at_close,
+        "realized_ebitda_at_close": platform_ebitda_at_close,
+        "entry_ebitda_shortfall": underwritten_ebitda_at_close - platform_ebitda_at_close,
         "terminal_ebitda": terminal_ebitda,
         "terminal_multiple": a.terminal_multiple,
         "terminal_enterprise_value": terminal_ev,
@@ -931,11 +971,15 @@ def severe_driver_groups() -> tuple[DriverGroup, ...]:
         DriverGroup("Entry valuation", {"platform_entry_multiple": 7.0}),
         DriverGroup(
             "Platform profitability",
-            {"platform_ebitda_margin": 0.165, "platform_margin_expansion_bps_per_year": 0},
+            {
+                "platform_ebitda_margin": 0.165,
+                "underwritten_ebitda_margin": 0.20,
+                "platform_margin_expansion_bps_per_year": 0,
+            },
             note=(
-                "Current-model attribution only. The platform-margin parameter also "
-                "changes implied entry purchase price and opening leverage, so this "
-                "component is NOT a clean estimate of normalized-EBITDA risk."
+                "A genuine normalized-EBITDA miss: the price and the debt stay struck "
+                "at the underwritten 20% while realized margin is 16.5%, so this "
+                "measures margin risk rather than a repricing."
             ),
         ),
         DriverGroup(

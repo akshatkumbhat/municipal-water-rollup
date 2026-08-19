@@ -1138,9 +1138,38 @@ def test_attribution_artifacts_ship_and_reconcile(package, manifest) -> None:
     assert "02_model/stress/driver_attribution_oat.csv" in listed
 
 
-def test_margin_contamination_is_flagged_beside_the_table(ic_summary) -> None:
-    """The caveat must sit with the number, not be buried in limitations."""
-    assert "not a clean read" in ic_summary
-    assert "fixed-dollar purchase-price mode" in ic_summary
-    body = ic_summary.split("### What actually destroys the value")[1]
-    assert "not a clean read" in body.split("## 9.")[0]
+def test_margin_risk_is_separated_from_repricing(package, ic_summary) -> None:
+    """The severe case must price a diligence miss, not a cheaper acquisition.
+
+    Previously `platform_ebitda_margin` set both the earnings and the purchase
+    price, so a margin stress silently repriced the deal and the decomposition
+    scored margin risk at a fraction of its real weight.
+    """
+    severe = json.loads(
+        (
+            package.output_dir / "02_model" / "stress" / "severe-downside" / "return_summary.json"
+        ).read_text(encoding="utf-8")
+    )
+    # Price struck on the believed margin, earnings delivered on the real one.
+    assert severe["entry_ebitda_shortfall"] > 0
+    assert (
+        severe["effective_platform_entry_multiple"] > severe["underwritten_platform_entry_multiple"]
+    )
+    assert severe["gross_leverage_at_close"] > 3.0, "true opening leverage must exceed headline"
+
+    body = ic_summary.split("### What actually destroys the value")[1].split("## 9.")[0]
+    assert "underwritten_ebitda_margin" in body
+    assert "diligence-miss" in body and "operating-miss" in body
+
+
+def test_both_margin_failure_modes_ship_separately(package) -> None:
+    """A price struck on absent EBITDA is not the same risk as later erosion."""
+    stress = package.output_dir / "02_model" / "stress"
+    diligence = json.loads((stress / "diligence-miss" / "return_summary.json").read_text())
+    operating = json.loads((stress / "operating-miss" / "return_summary.json").read_text())
+
+    # The diligence miss leaves the dollars paid untouched and raises the
+    # effective multiple; the operating miss leaves entry economics honest.
+    assert diligence["effective_platform_entry_multiple"] > 6.0
+    assert operating["effective_platform_entry_multiple"] == pytest.approx(6.0, abs=1e-9)
+    assert operating["entry_ebitda_shortfall"] == pytest.approx(0.0, abs=1e-9)
