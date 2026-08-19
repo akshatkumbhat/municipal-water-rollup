@@ -14,8 +14,8 @@ losing financial-model integrity or data provenance.
 ## 1. Set up the repository
 
 ```bash
-git clone https://github.com/akshatkumbhat/project-copperline.git
-cd project-copperline
+git clone https://github.com/akshatkumbhat/municipal-water-rollup.git
+cd municipal-water-rollup
 
 python3.11 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate

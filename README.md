@@ -1,6 +1,6 @@
 # Municipal Water & Wastewater Asset-Integrity Services Rollup
 
-[![CI](https://github.com/akshatkumbhat/project-copperline/actions/workflows/ci.yml/badge.svg)](https://github.com/akshatkumbhat/project-copperline/actions/workflows/ci.yml)
+[![CI](https://github.com/akshatkumbhat/municipal-water-rollup/actions/workflows/ci.yml/badge.svg)](https://github.com/akshatkumbhat/municipal-water-rollup/actions/workflows/ci.yml)
 
 A private-equity buy-and-build case study joining three workstreams usually
 presented separately: proprietary sourcing, transaction underwriting, and
