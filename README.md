@@ -15,7 +15,7 @@ the method turns on itself.
 
 | | Open | Why it matters |
 |---|---|---|
-| 1 | `IC_SUMMARY.md` §8 — *Downside* | The severe case returns **0.63x MOIC / −8.8% IRR** — the sponsor loses money. A Shapley decomposition apportions that 3.91x loss across six driver groups: organic growth 27%, platform profitability 21%, exit valuation 18%, integration 17%, entry valuation 16%. The section also carries a **retraction**: an earlier version inferred the ranking by subtracting one bundled scenario from another, which is not a valid attribution, and a modelling defect had margin risk understated at 5%. |
+| 1 | `IC_SUMMARY.md` §8 — *Downside* | The severe case returns **0.54x MOIC / −11.5% IRR** — the sponsor loses money. A Shapley decomposition apportions that 4.00x loss across six driver groups: organic growth 27%, platform profitability 20%, integration 19%, exit valuation 17%, entry valuation 15%. The section also carries a **retraction**: an earlier version inferred the ranking by subtracting one bundled scenario from another, which is not a valid attribution, and a modelling defect had margin risk understated at 5%. |
 | 2 | `IC_SUMMARY.md` — *What the evidence actually supports* | Of 8 material model inputs checked against published sources, **none** has peer-reviewed or government support. Three sit outside their cited range in the direction that flatters returns. |
 | 3 | `01_sourcing/score_distribution.csv` | The screening score saturates: 17 of 54 targets sit within five points of the maximum, so it goes flat exactly where a shortlist has to be cut. Recorded as an instrument-design limitation, not written off as a fixture artifact. |
 
@@ -137,7 +137,7 @@ outputs/candidate_package/
 │                              tie disclosure, funnel
 ├── 02_model/                  base / downside / upside: pro forma, sources and
 │                              uses, return bridge, sensitivities
-│   └── stress/                author-defined severe-downside (0.63x),
+│   └── stress/                author-defined severe-downside (0.54x),
 │                              integration-failure, diligence-miss and
 │                              operating-miss, plus the Shapley driver
 │                              attribution; shipped alongside the blueprint
@@ -328,7 +328,7 @@ moves the **entry multiple** (overpay at 7.0x), **platform margin** (20% to
 16.5% realized against 20% underwritten, with no expansion), and **add-on
 integration** (one tuck-in underperforms, one is late and smaller, one never
 closes), alongside a 3% annual revenue decline, 10.5% interest, and a 5.0x exit.
-It returns **0.63x MOIC / -8.8% IRR** — a modeled capital-impairment case in
+It returns **0.54x MOIC / -11.5% IRR** — a modeled capital-impairment case in
 which the sponsor does not recover its investment. Because the price and the
 debt stay struck at the underwritten margin, the effective entry multiple is
 8.5x rather than the 7.0x bid, and true opening leverage 3.6x rather than 3.0x. Debt still amortises throughout, so it models value destruction

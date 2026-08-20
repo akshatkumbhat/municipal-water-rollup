@@ -1165,11 +1165,40 @@ def test_margin_risk_is_separated_from_repricing(package, ic_summary) -> None:
 def test_both_margin_failure_modes_ship_separately(package) -> None:
     """A price struck on absent EBITDA is not the same risk as later erosion."""
     stress = package.output_dir / "02_model" / "stress"
+    base = json.loads(
+        (package.output_dir / "02_model" / "base" / "return_summary.json").read_text()
+    )
     diligence = json.loads((stress / "diligence-miss" / "return_summary.json").read_text())
     operating = json.loads((stress / "operating-miss" / "return_summary.json").read_text())
 
-    # The diligence miss leaves the dollars paid untouched and raises the
-    # effective multiple; the operating miss leaves entry economics honest.
+    # Assert the economics directly rather than inferring them from the multiple:
+    # the dollars committed at close must be identical to the base case.
+    assert diligence["platform_enterprise_value"] == pytest.approx(
+        base["platform_enterprise_value"], abs=1e-9
+    )
+    assert diligence["initial_debt"] == pytest.approx(base["initial_debt"], abs=1e-9)
+    assert diligence["underwritten_ebitda_at_close"] == pytest.approx(
+        base["realized_ebitda_at_close"], abs=1e-9
+    )
+    assert diligence["realized_ebitda_at_close"] < diligence["underwritten_ebitda_at_close"]
     assert diligence["effective_platform_entry_multiple"] > 6.0
+
+    # The operating miss was priced correctly, so entry economics stay honest.
     assert operating["effective_platform_entry_multiple"] == pytest.approx(6.0, abs=1e-9)
     assert operating["entry_ebitda_shortfall"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_underperforming_add_ons_are_not_bought_cheaper(package) -> None:
+    """The tuck-in-level repair, asserted on the shipped artifacts.
+
+    The stressed schedule cuts Add-on A to a 13% margin and B to 15%. If those
+    misses also cut the price paid, integration failure would partly pay for
+    itself and the driver attribution would understate it.
+    """
+    from buy_and_build_model import load_scenarios
+
+    severe = load_scenarios(pathlib.Path("examples/scenarios.json"))["severe-downside"]
+    for add_on in severe.add_ons:
+        assert add_on.underwritten_ebitda_margin is not None, add_on.name
+        assert add_on.underwritten_ebitda_margin > add_on.ebitda_margin, add_on.name
+        assert add_on.effective_entry_multiple > add_on.entry_multiple, add_on.name

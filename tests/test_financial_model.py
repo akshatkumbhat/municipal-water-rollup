@@ -933,16 +933,90 @@ def test_one_at_a_time_overshoots_and_is_therefore_not_an_attribution() -> None:
     assert isolated > endpoint * 1.2, "if these ever agree, the non-additivity note is wrong"
 
 
-def test_lower_entry_margin_currently_raises_moic() -> None:
-    """Documents the modelling defect the attribution caveat warns about.
+def test_repricing_case_buys_cheaper_when_underwritten_margin_is_unspecified() -> None:
+    """Intentional repricing semantics, not an unresolved defect.
 
-    Purchase price and opening debt both derive from the assumed entry margin,
-    so cutting the margin alone buys the business cheaper. Until a fixed-dollar
-    purchase-price mode exists, the model cannot express a diligence miss, and
-    no margin-fragility claim may rest on this parameter. Delete this test when
-    that mode lands.
+    Moving `platform_ebitda_margin` with no underwritten margin set describes a
+    *different, cheaper business*: the price and the debt scale with it, so MOIC
+    rises. That is correct — a lower-EBITDA company should cost less. It is
+    simply not margin *risk*, which is modelled by holding the underwritten
+    margin fixed (see the test below). Both behaviours are wanted.
     """
     base = SCENARIOS["base"]
     cheaper = replace(base, assumptions=replace(base.assumptions, platform_ebitda_margin=0.165))
 
-    assert run_scenario(cheaper).returns["gross_moic"] > run_scenario(base).returns["gross_moic"]
+    base_returns = run_scenario(base).returns
+    cheaper_returns = run_scenario(cheaper).returns
+    assert cheaper_returns["gross_moic"] > base_returns["gross_moic"]
+    assert cheaper_returns["platform_enterprise_value"] < base_returns["platform_enterprise_value"]
+    assert cheaper_returns["effective_platform_entry_multiple"] == pytest.approx(
+        base_returns["effective_platform_entry_multiple"], abs=TOL
+    ), "a repricing leaves entry economics honest; only a miss distorts them"
+
+
+def test_a_diligence_miss_costs_money_and_leaves_the_dollars_fixed() -> None:
+    base = SCENARIOS["base"]
+    miss = replace(
+        base,
+        assumptions=replace(
+            base.assumptions, platform_ebitda_margin=0.165, underwritten_ebitda_margin=0.20
+        ),
+    )
+    base_returns = run_scenario(base).returns
+    miss_returns = run_scenario(miss).returns
+
+    assert miss_returns["gross_moic"] < base_returns["gross_moic"], "margin risk must cost money"
+    assert miss_returns["platform_enterprise_value"] == pytest.approx(
+        base_returns["platform_enterprise_value"], abs=TOL
+    ), "the price paid is already struck"
+    assert miss_returns["initial_debt"] == pytest.approx(base_returns["initial_debt"], abs=TOL), (
+        "the debt drawn is already committed"
+    )
+    assert miss_returns["underwritten_ebitda_at_close"] == pytest.approx(
+        base_returns["realized_ebitda_at_close"], abs=TOL
+    )
+    assert miss_returns["realized_ebitda_at_close"] < miss_returns["underwritten_ebitda_at_close"]
+    assert miss_returns["effective_platform_entry_multiple"] > 6.0
+
+
+def test_underwritten_margin_defaults_to_the_realized_margin() -> None:
+    """Unset, the split must be invisible: no existing result may move."""
+    base = SCENARIOS["base"]
+    explicit = replace(
+        base,
+        assumptions=replace(
+            base.assumptions, underwritten_ebitda_margin=base.assumptions.platform_ebitda_margin
+        ),
+    )
+    assert run_scenario(explicit).returns == run_scenario(base).returns
+
+
+def test_underwritten_margin_is_validated_when_set() -> None:
+    base = SCENARIOS["base"]
+    for bad in (0.0, 1.0, -0.1):
+        with pytest.raises(ValueError, match="underwritten_ebitda_margin"):
+            run_scenario(
+                replace(base, assumptions=replace(base.assumptions, underwritten_ebitda_margin=bad))
+            )
+
+
+def test_an_underperforming_add_on_is_not_bought_cheaper() -> None:
+    """The same repair, applied at the tuck-in level.
+
+    Before `AddOn.underwritten_ebitda_margin`, a tuck-in that missed its margin
+    case was automatically priced off the lower EBITDA — execution failure
+    partially paid for itself, and integration risk was understated.
+    """
+    underwritten = AddOn("A", close_year=2, revenue_at_close=2.0, ebitda_margin=0.18)
+    missed = replace(underwritten, ebitda_margin=0.13, underwritten_ebitda_margin=0.18)
+
+    assert missed.enterprise_value == pytest.approx(underwritten.enterprise_value, abs=TOL)
+    assert missed.ebitda_at_close < underwritten.ebitda_at_close
+    assert missed.effective_entry_multiple > missed.entry_multiple
+    assert missed.realized_ebitda_at_close == missed.ebitda_at_close
+
+    # Unset, pricing still follows the delivered margin: a genuinely smaller
+    # business does cost less, and that behaviour is unchanged.
+    reprice = replace(underwritten, ebitda_margin=0.13)
+    assert reprice.enterprise_value < underwritten.enterprise_value
+    assert reprice.effective_entry_multiple == pytest.approx(reprice.entry_multiple, abs=TOL)

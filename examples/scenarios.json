@@ -25,7 +25,7 @@
         "sgna_synergy_capture": "15% -> 5%, realization 50% -> 25%. Integration takes longer and delivers less.",
         "interest_rate": "8.0% -> 10.5%. Credit conditions tighten as performance deteriorates.",
         "terminal_multiple": "6.5x -> 5.0x. A shrinking, lower-margin platform does not earn a scaled-platform re-rating.",
-        "add_ons": "Add-on A closes but underperforms its margin case (18% -> 13%); Add-on B closes a year late and smaller; Add-on C never closes.",
+        "add_ons": "Add-on A closes but underperforms its margin case (18% underwritten -> 13% realized, an effective 4.85x entry against a 3.5x bid); Add-on B closes a year late and smaller (18% -> 15% realized). Revenue changes are genuine size differences known before pricing, so they do change the price paid. Margin misses are not: the price was already struck at 18%. Without underwritten_ebitda_margin these tuck-ins were bought $539k cheaper precisely because they underperformed, which understated integration risk.",
         "underwritten_ebitda_margin": "Held at 20%: what the deal was priced and levered on. Without it, a margin stress silently reprices the acquisition and flatters returns."
       },
       "assumptions": {
@@ -44,13 +44,15 @@
           "name": "Add-on A (underperforms)",
           "close_year": 2,
           "revenue_at_close": 2.0,
-          "ebitda_margin": 0.13
+          "ebitda_margin": 0.13,
+          "underwritten_ebitda_margin": 0.18
         },
         {
           "name": "Add-on B (delayed, smaller)",
           "close_year": 4,
           "revenue_at_close": 1.8,
-          "ebitda_margin": 0.15
+          "ebitda_margin": 0.15,
+          "underwritten_ebitda_margin": 0.18
         }
       ]
     },
@@ -59,20 +61,22 @@
       "description": "Isolates add-on execution risk: the platform performs to the base case, but the tuck-in programme underdelivers.",
       "source": "Author-defined single-driver case. The blueprint downside cannot express this at all, because it varies only assumption rates and never the acquisition schedule.",
       "_stress_rationale": {
-        "add_ons": "Same failed programme as severe-downside, with every platform assumption left at base. Isolating the driver shows how much of the return depends on tuck-ins actually closing and hitting their case."
+        "add_ons": "Add-on A closes but underperforms its margin case (18% underwritten -> 13% realized, an effective 4.85x entry against a 3.5x bid); Add-on B closes a year late and smaller (18% -> 15% realized). Revenue changes are genuine size differences known before pricing, so they do change the price paid. Margin misses are not: the price was already struck at 18%. Without underwritten_ebitda_margin these tuck-ins were bought $539k cheaper precisely because they underperformed, which understated integration risk."
       },
       "add_ons": [
         {
           "name": "Add-on A (underperforms)",
           "close_year": 2,
           "revenue_at_close": 2.0,
-          "ebitda_margin": 0.13
+          "ebitda_margin": 0.13,
+          "underwritten_ebitda_margin": 0.18
         },
         {
           "name": "Add-on B (delayed, smaller)",
           "close_year": 4,
           "revenue_at_close": 1.8,
-          "ebitda_margin": 0.15
+          "ebitda_margin": 0.15,
+          "underwritten_ebitda_margin": 0.18
         }
       ]
     },

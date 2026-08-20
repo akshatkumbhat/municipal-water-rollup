@@ -31,19 +31,52 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class AddOn:
+    """One tuck-in, with its underwritten and realized economics kept apart.
+
+    `ebitda_margin` is what the business delivers. `underwritten_ebitda_margin`
+    is what its price was struck on, defaulting to the same thing. The split
+    exists for the same reason it exists on the platform: without it, a tuck-in
+    that underperforms its margin case is automatically bought cheaper, so
+    execution failure partially pays for itself and the modelled damage is
+    understated.
+    """
+
     name: str
     close_year: int
     revenue_at_close: float
     ebitda_margin: float
     entry_multiple: float = 3.5
+    underwritten_ebitda_margin: float | None = None
 
     @property
     def ebitda_at_close(self) -> float:
+        """EBITDA actually delivered at close. Drives the operating schedule."""
         return self.revenue_at_close * self.ebitda_margin
+
+    #: Explicit alias. `ebitda_at_close` predates the split and is kept because
+    #: it is what every consumer of realized earnings already calls.
+    realized_ebitda_at_close = ebitda_at_close
+
+    @property
+    def underwritten_ebitda_at_close(self) -> float:
+        """EBITDA the purchase price was negotiated against."""
+        margin = (
+            self.ebitda_margin
+            if self.underwritten_ebitda_margin is None
+            else self.underwritten_ebitda_margin
+        )
+        return self.revenue_at_close * margin
 
     @property
     def enterprise_value(self) -> float:
-        return self.ebitda_at_close * self.entry_multiple
+        """Dollars paid. Struck on underwritten EBITDA, not delivered EBITDA."""
+        return self.underwritten_ebitda_at_close * self.entry_multiple
+
+    @property
+    def effective_entry_multiple(self) -> float:
+        """What was paid per turn of the EBITDA the tuck-in actually earns."""
+        realized = self.ebitda_at_close
+        return self.enterprise_value / realized if realized else float("nan")
 
 
 @dataclass(frozen=True)
@@ -1043,9 +1076,9 @@ def shapley_attribution(
     One-at-a-time perturbation cannot attribute this loss: the stresses are
     strongly non-additive, so isolated effects neither sum to the endpoint
     difference nor support residualizing one bundle against another. The Shapley
-    value is the unique attribution that is order-independent, gives an unused
-    driver exactly zero, and sums to the total — the three properties an
-    underwriting reader is entitled to assume.
+    value provides an order-independent allocation, assigns zero to a dummy
+    driver, and reconciles exactly to the endpoint difference — the properties an
+    underwriting reader is entitled to assume of a driver contribution.
 
     Evaluated exhaustively over all 2**n coalitions, so the result is exact
     rather than sampled. Callers should keep n small enough to stay interpretable.
